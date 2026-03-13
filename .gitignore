@@ -1,0 +1,30 @@
+# API keys and secrets — NEVER commit these
+.env
+config_local.py
+
+# Scraped data (keep local, don't bloat the repo)
+output/
+.cache/
+scraper_output/
+scraper_cache/
+
+# Python junk
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
