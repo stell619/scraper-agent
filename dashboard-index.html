@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adnan // Command Centre</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06090d;
+    --bg2: #0c1017;
+    --bg3: #111820;
+    --bg4: #171f2a;
+    --border: rgba(255,255,255,0.05);
+    --border2: rgba(255,255,255,0.1);
+    --green: #00ff87;
+    --green-dim: rgba(0,255,135,0.08);
+    --green-glow: rgba(0,255,135,0.15);
+    --amber: #ffb800;
+    --amber-dim: rgba(255,184,0,0.08);
+    --blue: #4d9fff;
+    --blue-dim: rgba(77,159,255,0.08);
+    --red: #ff4d6a;
+    --red-dim: rgba(255,77,106,0.08);
+    --cyan: #00d4ff;
+    --purple: #b44dff;
+    --text: #e4e9f0;
+    --text2: #6b7a8d;
+    --text3: #3a4553;
+    --mono: 'JetBrains Mono', 'Courier New', monospace;
+    --sans: 'Outfit', 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
+
+  /* Subtle grid background */
+  body::before{content:'';position:fixed;inset:0;background-image:
+    radial-gradient(ellipse at 20% 50%, rgba(0,255,135,0.02) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(77,159,255,0.015) 0%, transparent 50%),
+    linear-gradient(rgba(0,255,135,0.008) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,255,135,0.008) 1px,transparent 1px);
+    background-size:100% 100%,100% 100%,32px 32px,32px 32px;pointer-events:none;z-index:0}
+
+  .wrapper{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:20px 24px}
+
+  /* ── HEADER ── */
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+  .logo{font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:0.25em;text-transform:uppercase;margin-bottom:4px;opacity:0.7}
+  .title{font-size:28px;font-weight:900;color:var(--text);letter-spacing:-0.03em}
+  .subtitle{font-size:11px;color:var(--text2);margin-top:2px;font-family:var(--mono);font-weight:300}
+  .live-time{font-family:var(--mono);font-size:28px;font-weight:700;color:var(--text);letter-spacing:0.08em;text-align:right}
+  .live-date{font-size:10px;color:var(--text2);font-family:var(--mono);margin-top:2px;text-align:right;font-weight:300}
+  .status-badges{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+  .badge{display:inline-flex;align-items:center;gap:5px;border-radius:100px;padding:3px 10px;font-size:9px;font-family:var(--mono);letter-spacing:0.06em;font-weight:500}
+  .badge-green{background:var(--green-dim);border:1px solid rgba(0,255,135,0.15);color:var(--green)}
+  .badge-blue{background:var(--blue-dim);border:1px solid rgba(77,159,255,0.15);color:var(--blue)}
+  .badge-amber{background:var(--amber-dim);border:1px solid rgba(255,184,0,0.15);color:var(--amber)}
+  .pulse{width:5px;height:5px;border-radius:50%;background:currentColor;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.3;transform:scale(0.7)}}
+
+  /* ── SYSTEM BAR ── */
+  .sys-bar{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px}
+  .sys-item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;position:relative;overflow:hidden}
+  .sys-label{font-family:var(--mono);font-size:8px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3);margin-bottom:6px}
+  .sys-val{font-size:20px;font-weight:800;color:var(--text);letter-spacing:-0.02em}
+  .sys-sub{font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:4px;font-weight:300}
+  .sys-bar-inner{height:2px;background:var(--bg4);border-radius:1px;margin-top:6px;overflow:hidden}
+  .sys-bar-fill{height:100%;border-radius:1px;transition:width 1s ease}
+  .fill-green{background:var(--green)} .fill-amber{background:var(--amber)} .fill-red{background:var(--red)} .fill-blue{background:var(--blue)}
+
+  /* ── CARDS ── */
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;overflow:hidden}
+  .card-glow{box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)}
+  .card-label{font-family:var(--mono);font-size:9px;letter-spacing:0.18em;text-transform:uppercase;color:var(--text3);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .card-label .dot{width:4px;height:4px;border-radius:50%}
+
+  /* ── GRID LAYOUTS ── */
+  .top-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px}
+  .mid-row{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+  .bot-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px}
+
+  /* ── CLAWBOT STATUS ── */
+  .bot-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .bot-avatar{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;position:relative;transition:all 0.3s}
+  .bot-avatar.idle{background:var(--green-dim);border:1px solid rgba(0,255,135,0.15)}
+  .bot-avatar.busy{background:var(--amber-dim);border:1px solid rgba(255,184,0,0.2);animation:avatarPulse 0.8s infinite alternate}
+  @keyframes avatarPulse{0%{box-shadow:0 0 0 0 rgba(255,184,0,0.1)}100%{box-shadow:0 0 20px 4px rgba(255,184,0,0.15)}}
+  .bot-name{font-size:14px;font-weight:700;color:var(--text)}
+  .bot-model{font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:2px;font-weight:400}
+  .bot-action{font-size:11px;color:var(--text2);font-family:var(--mono);padding:10px 12px;background:var(--bg3);border-radius:8px;border:1px solid var(--border);margin-bottom:10px;display:flex;align-items:center;gap:8px;font-weight:400;min-height:36px}
+  .thinking span{display:inline-block;width:3px;height:3px;border-radius:50%;background:var(--amber);animation:blink 1.2s infinite;margin-right:2px}
+  .thinking span:nth-child(2){animation-delay:0.2s}.thinking span:nth-child(3){animation-delay:0.4s}
+  @keyframes blink{0%,80%,100%{opacity:0.2}40%{opacity:1}}
+
+  /* ── DANCING LOBSTER ── */
+  .lobster-wrap{display:none;flex-direction:column;align-items:center;padding:14px 0 8px}
+  .lobster-wrap.active{display:flex}
+  .lobster{font-size:48px;animation:lobDance 0.4s infinite alternate;transform-origin:center bottom;filter:drop-shadow(0 0 15px rgba(0,255,135,0.4))}
+  @keyframes lobDance{
+    0%{transform:rotate(-20deg) translateY(0) scaleX(1)}
+    25%{transform:rotate(5deg) translateY(-10px) scaleX(1)}
+    50%{transform:rotate(20deg) translateY(0) scaleX(1)}
+    75%{transform:rotate(-5deg) translateY(-6px) scaleX(-1)}
+    100%{transform:rotate(-20deg) translateY(0) scaleX(-1)}
+  }
+  .lob-task{font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:0.15em;margin-top:6px;text-align:center;max-width:200px;font-weight:500}
+  .lob-bar{width:100%;height:2px;background:var(--bg4);border-radius:1px;margin-top:8px;overflow:hidden}
+  .lob-bar-fill{height:100%;background:linear-gradient(90deg,var(--green),var(--cyan));border-radius:1px;animation:scanner 1.6s ease-in-out infinite}
+  @keyframes scanner{0%{width:0%;margin-left:0%}50%{width:50%;margin-left:25%}100%{width:0%;margin-left:100%}}
+
+  /* ── LOG ── */
+  .log-entry{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px;font-weight:400}
+  .log-entry:last-child{border-bottom:none}
+  .log-time{color:var(--text3);flex-shrink:0}
+  .log-ok{color:var(--green)}.log-active{color:var(--blue)}.log-warn{color:var(--amber)}.log-err{color:var(--red)}
+
+  /* ── CRYPTO TABLE ── */
+  .coin-row{display:grid;grid-template-columns:28px 60px 1fr 90px 70px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px}
+  .coin-row:last-child{border-bottom:none}
+  .coin-row.header{color:var(--text3);font-family:var(--mono);font-size:8px;letter-spacing:0.1em;text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--border2)}
+  .coin-rank{font-family:var(--mono);font-size:9px;color:var(--text3)}
+  .coin-sym{font-weight:700;color:var(--text)}
+  .coin-name{color:var(--text2);font-size:10px;font-weight:300}
+  .coin-price{font-family:var(--mono);font-weight:600;text-align:right}
+  .coin-chg{font-family:var(--mono);font-weight:600;text-align:right;font-size:10px}
+  .up{color:var(--green)}.down{color:var(--red)}.neutral{color:var(--text2)}
+
+  /* ── FEAR & GREED ── */
+  .fg-display{text-align:center;padding:10px 0}
+  .fg-value{font-size:52px;font-weight:900;letter-spacing:-0.04em;line-height:1}
+  .fg-label{font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:6px;font-weight:500}
+  .fg-bar{height:4px;background:var(--bg4);border-radius:2px;margin-top:12px;overflow:hidden;position:relative}
+  .fg-bar-fill{height:100%;border-radius:2px;transition:width 1.5s ease}
+  .fg-bar::before{content:'FEAR';position:absolute;left:4px;top:-14px;font-family:var(--mono);font-size:7px;color:var(--red);letter-spacing:0.1em}
+  .fg-bar::after{content:'GREED';position:absolute;right:4px;top:-14px;font-family:var(--mono);font-size:7px;color:var(--green);letter-spacing:0.1em}
+
+  /* ── MARKET OVERVIEW ── */
+  .market-stat{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px}
+  .market-stat:last-child{border-bottom:none}
+  .market-name{color:var(--text2);font-weight:400}
+  .market-val{font-family:var(--mono);font-weight:600}
+
+  /* ── INDEX ROW ── */
+  .index-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px}
+  .index-row:last-child{border-bottom:none}
+  .index-name{font-weight:500;color:var(--text)}
+  .index-price{font-family:var(--mono);font-weight:500;color:var(--text2)}
+  .index-chg{font-family:var(--mono);font-weight:600;font-size:11px}
+
+  /* ── PIPELINE ── */
+  .pipeline-step{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
+  .pipeline-step:last-child{border-bottom:none}
+  .step-num{width:26px;height:26px;border-radius:7px;background:var(--bg4);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;color:var(--text3);flex-shrink:0;transition:all 0.3s;font-weight:600}
+  .step-num.active{background:var(--blue-dim);border-color:rgba(77,159,255,0.3);color:var(--blue)}
+  .step-num.done{background:var(--green-dim);border-color:rgba(0,255,135,0.3);color:var(--green)}
+  .step-name{font-size:12px;font-weight:600;color:var(--text)}
+  .step-detail{font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:2px;font-weight:300}
+  .step-bar{height:2px;background:var(--bg4);border-radius:1px;margin-top:4px;overflow:hidden}
+  .step-bar-fill{height:100%;border-radius:1px;width:0%;transition:width 2s ease}
+  .blue-fill{background:var(--blue)}.green-fill{background:var(--green)}
+
+  /* ── SCHEDULE ── */
+  .schedule-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px}
+  .schedule-row:last-child{border-bottom:none}
+  .schedule-row.next .schedule-name{color:var(--green)}
+  .next-tag{font-family:var(--mono);font-size:8px;background:var(--green-dim);color:var(--green);border:1px solid rgba(0,255,135,0.15);border-radius:3px;padding:1px 5px;margin-left:5px;letter-spacing:0.1em;font-weight:500}
+  .schedule-time{font-family:var(--mono);font-size:10px;color:var(--text2);font-weight:400}
+  .day-progress{height:2px;background:var(--bg4);border-radius:1px;margin-top:10px;overflow:hidden}
+  .day-progress-fill{height:100%;background:linear-gradient(90deg,var(--green),var(--cyan));border-radius:1px;opacity:0.5;transition:width 1s ease}
+
+  /* ── GYM ── */
+  .gym-row{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;border-radius:6px;margin-bottom:2px;font-size:11px;transition:all 0.2s}
+  .gym-row.today{background:var(--green-dim);border:1px solid rgba(0,255,135,0.1)}
+  .gym-row.rest{opacity:0.3}
+  .gym-day-name{font-weight:600;color:var(--text);font-size:11px}
+  .gym-tag{font-family:var(--mono);font-size:8px;letter-spacing:0.06em;color:var(--text2);font-weight:400}
+  .gym-row.today .gym-day-name{color:var(--green)}.gym-row.today .gym-tag{color:var(--green);opacity:0.8}
+
+  /* ── ACTIONS ── */
+  .actions-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+  .action-btn{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 8px;cursor:pointer;font-family:var(--sans);font-size:10px;font-weight:600;color:var(--text2);text-align:center;transition:all 0.15s;outline:none}
+  .action-btn:hover{border-color:var(--green);color:var(--green);background:rgba(0,255,135,0.03);transform:translateY(-1px)}
+  .action-btn:active{transform:scale(0.97);transform:translateY(0)}
+  .action-btn .icon{font-size:16px;display:block;margin-bottom:4px}
+
+  /* ── FOOTER ── */
+  .footer{display:flex;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border);font-family:var(--mono);font-size:9px;color:var(--text3);font-weight:300}
+
+  ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+  /* ── RESPONSIVE ── */
+  @media(max-width:1100px){.top-row,.bot-row{grid-template-columns:1fr 1fr}.mid-row{grid-template-columns:1fr}.sys-bar{grid-template-columns:repeat(3,1fr)}.actions-grid{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:700px){.top-row,.bot-row,.mid-row{grid-template-columns:1fr}.sys-bar{grid-template-columns:repeat(2,1fr)}.actions-grid{grid-template-columns:repeat(2,1fr)}}
+
+  /* ── STAGGER ANIMATION ── */
+  .card,.sys-item{opacity:0;animation:fadeUp 0.4s forwards}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .sys-item:nth-child(1){animation-delay:0.05s}.sys-item:nth-child(2){animation-delay:0.1s}.sys-item:nth-child(3){animation-delay:0.15s}.sys-item:nth-child(4){animation-delay:0.2s}.sys-item:nth-child(5){animation-delay:0.25s}.sys-item:nth-child(6){animation-delay:0.3s}
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div>
+      <div class="logo">// command centre v2</div>
+      <div class="title">Adnan</div>
+      <div class="subtitle">Peakhurst, Sydney — the engine room</div>
+    </div>
+    <div>
+      <div class="live-time" id="live-time">--:--:--</div>
+      <div class="live-date" id="live-date">---</div>
+      <div class="status-badges">
+        <div class="badge badge-green"><div class="pulse"></div><span id="bot-badge">CLAWBOT ONLINE</span></div>
+        <div class="badge badge-blue"><div class="pulse"></div><span id="sys-badge">SYSTEM OK</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SYSTEM BAR -->
+  <div class="sys-bar">
+    <div class="sys-item" style="animation-delay:0.05s">
+      <div class="sys-label">CPU</div>
+      <div class="sys-val" id="sys-cpu">0%</div>
+      <div class="sys-sub" id="sys-cpu-sub">i5-1035G4</div>
+      <div class="sys-bar-inner"><div class="sys-bar-fill fill-green" id="sys-cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="sys-item" style="animation-delay:0.1s">
+      <div class="sys-label">Memory</div>
+      <div class="sys-val" id="sys-ram">0%</div>
+      <div class="sys-sub" id="sys-ram-sub">0 / 7.4 GB</div>
+      <div class="sys-bar-inner"><div class="sys-bar-fill fill-blue" id="sys-ram-bar" style="width:0%"></div></div>
+    </div>
+    <div class="sys-item" style="animation-delay:0.15s">
+      <div class="sys-label">Disk</div>
+      <div class="sys-val" id="sys-disk">0%</div>
+      <div class="sys-sub" id="sys-disk-sub">0 / 116 GB</div>
+      <div class="sys-bar-inner"><div class="sys-bar-fill fill-amber" id="sys-disk-bar" style="width:0%"></div></div>
+    </div>
+    <div class="sys-item" style="animation-delay:0.2s">
+      <div class="sys-label">Temp</div>
+      <div class="sys-val" id="sys-temp">--°</div>
+      <div class="sys-sub">CPU core</div>
+      <div class="sys-bar-inner"><div class="sys-bar-fill fill-red" id="sys-temp-bar" style="width:0%"></div></div>
+    </div>
+    <div class="sys-item" style="animation-delay:0.25s">
+      <div class="sys-label">Uptime</div>
+      <div class="sys-val" id="sys-uptime">--</div>
+      <div class="sys-sub" id="sys-procs">-- processes</div>
+    </div>
+    <div class="sys-item" style="animation-delay:0.3s">
+      <div class="sys-label">Network</div>
+      <div class="sys-val" id="sys-net">--</div>
+      <div class="sys-sub" id="sys-net-sub">↑ 0 MB · ↓ 0 MB</div>
+    </div>
+  </div>
+
+  <!-- TOP ROW: Crypto | Fear & Greed + Market Stats | ClawBot -->
+  <div class="top-row">
+    <!-- CRYPTO -->
+    <div class="card card-glow" style="animation-delay:0.15s">
+      <div class="card-label"><div class="dot" style="background:var(--amber)"></div>Crypto — Top coins</div>
+      <div class="coin-row header">
+        <span>#</span><span>SYM</span><span>NAME</span><span style="text-align:right">PRICE</span><span style="text-align:right">24H</span>
+      </div>
+      <div id="crypto-coins">
+        <div style="text-align:center;padding:20px;color:var(--text3);font-family:var(--mono);font-size:10px">Loading data...</div>
+      </div>
+    </div>
+
+    <!-- FEAR & GREED + MARKET STATS -->
+    <div class="card card-glow" style="animation-delay:0.2s">
+      <div class="card-label"><div class="dot" style="background:var(--red)"></div>Market Pulse</div>
+      <div class="fg-display">
+        <div class="fg-value" id="fg-value" style="color:var(--red)">--</div>
+        <div class="fg-label" id="fg-label">Loading...</div>
+      </div>
+      <div class="fg-bar" style="margin-top:20px">
+        <div class="fg-bar-fill" id="fg-bar" style="width:15%;background:linear-gradient(90deg,var(--red),var(--amber),var(--green))"></div>
+      </div>
+      <div style="margin-top:20px">
+        <div class="market-stat"><span class="market-name">Total Market Cap</span><span class="market-val" id="mk-cap">--</span></div>
+        <div class="market-stat"><span class="market-name">BTC Dominance</span><span class="market-val" id="mk-btc">--</span></div>
+        <div class="market-stat"><span class="market-name">24h Change</span><span class="market-val" id="mk-change">--</span></div>
+        <div class="market-stat"><span class="market-name">Data Age</span><span class="market-val" id="mk-age" style="color:var(--text3)">--</span></div>
+      </div>
+    </div>
+
+    <!-- CLAWBOT STATUS -->
+    <div class="card card-glow" style="animation-delay:0.25s">
+      <div class="card-label"><div class="dot" style="background:var(--green)"></div>ClawBot</div>
+      <div class="bot-header">
+        <div class="bot-avatar idle" id="bot-avatar">🦞</div>
+        <div>
+          <div class="bot-name">Adz_openclawbot</div>
+          <div class="bot-model" id="current-model">anthropic/claude-haiku-4-5</div>
+        </div>
+      </div>
+      <div class="bot-action">
+        <span style="color:var(--green);margin-right:2px" id="action-icon">▶</span>
+        <span id="action-text">Idle — waiting for instructions</span>
+        <div class="thinking" id="thinking" style="display:none;margin-left:auto"><span></span><span></span><span></span></div>
+      </div>
+      <div class="lobster-wrap" id="lobster-wrap">
+        <div class="lobster">🦞</div>
+        <div class="lob-task" id="lob-task">PROCESSING...</div>
+        <div class="lob-bar"><div class="lob-bar-fill"></div></div>
+      </div>
+      <div class="card-label" style="margin-top:8px"><div class="dot" style="background:var(--blue)"></div>Live log</div>
+      <div id="log-container" style="max-height:140px;overflow-y:auto">
+        <div class="log-entry"><span class="log-time" id="init-time">--:--</span><span class="log-ok">Waiting for activity...</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MID ROW: Stock Indices + Movers | Pipeline -->
+  <div class="mid-row">
+    <div class="card card-glow" style="animation-delay:0.3s">
+      <div class="card-label"><div class="dot" style="background:var(--blue)"></div>Stock Market</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:0.15em;margin-bottom:8px">INDICES</div>
+          <div id="stock-indices">
+            <div class="index-row"><span class="index-name" style="color:var(--text3)">Loading...</span></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:0.15em;margin-bottom:8px">TOP MOVERS</div>
+          <div id="stock-movers">
+            <div class="index-row"><span class="index-name" style="color:var(--text3)">Loading...</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card-glow" style="animation-delay:0.35s">
+      <div class="card-label"><div class="dot" style="background:var(--purple)"></div>Art Pipeline</div>
+      <div class="pipeline-step"><div class="step-num" id="s1">01</div><div style="flex:1"><div class="step-name">Generate paintings</div><div class="step-detail" id="s1-d">DALL-E 3 · idle</div><div class="step-bar"><div class="step-bar-fill blue-fill" id="s1-b"></div></div></div></div>
+      <div class="pipeline-step"><div class="step-num" id="s2">02</div><div style="flex:1"><div class="step-name">Assemble videos</div><div class="step-detail" id="s2-d">FFmpeg · idle</div><div class="step-bar"><div class="step-bar-fill blue-fill" id="s2-b"></div></div></div></div>
+      <div class="pipeline-step"><div class="step-num" id="s3">03</div><div style="flex:1"><div class="step-name">Upload to YouTube</div><div class="step-detail" id="s3-d">YouTube API · idle</div><div class="step-bar"><div class="step-bar-fill green-fill" id="s3-b"></div></div></div></div>
+      <div style="margin-top:10px;display:flex;gap:6px">
+        <button class="action-btn" style="flex:1;padding:8px" onclick="simulatePipeline()">▶ Simulate</button>
+        <button class="action-btn" style="flex:1;padding:8px" onclick="resetPipeline()">↺ Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW: Schedule | Gym | Metrics -->
+  <div class="bot-row">
+    <div class="card card-glow" style="animation-delay:0.35s">
+      <div class="card-label"><div class="dot" style="background:var(--cyan)"></div>Schedule</div>
+      <div class="schedule-row" id="sr0"><span class="schedule-name">Morning blast + weather</span><span class="schedule-time">06:30</span></div>
+      <div class="schedule-row" id="sr1"><span class="schedule-name">Work block kickoff</span><span class="schedule-time">08:00</span></div>
+      <div class="schedule-row" id="sr2"><span class="schedule-name">Gym reminder</span><span class="schedule-time">12:00</span></div>
+      <div class="schedule-row" id="sr3"><span class="schedule-name">End of day wrap-up</span><span class="schedule-time">21:00</span></div>
+      <div class="day-progress"><div class="day-progress-fill" id="day-fill"></div></div>
+      <div style="margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--text2);font-weight:300">Next: <span id="next-event" style="color:var(--green)">calculating...</span></div>
+    </div>
+
+    <div class="card card-glow" style="animation-delay:0.4s">
+      <div class="card-label"><div class="dot" style="background:var(--green)"></div>Training Split</div>
+      <div class="gym-row" id="g1"><span class="gym-day-name">Mon</span><span class="gym-tag">CHEST · SHOULDERS · TRIS</span></div>
+      <div class="gym-row" id="g2"><span class="gym-day-name">Tue</span><span class="gym-tag">BACK · BICEPS · CORE</span></div>
+      <div class="gym-row rest" id="g3"><span class="gym-day-name">Wed</span><span class="gym-tag">REST + RIDE 🏍️</span></div>
+      <div class="gym-row" id="g4"><span class="gym-day-name">Thu</span><span class="gym-tag">LEGS + CARDIO</span></div>
+      <div class="gym-row" id="g5"><span class="gym-day-name">Fri</span><span class="gym-tag">PUSH / PULL HYBRID</span></div>
+      <div class="gym-row rest" id="g6"><span class="gym-day-name">Sat</span><span class="gym-tag">REST</span></div>
+      <div class="gym-row rest" id="g7"><span class="gym-day-name">Sun</span><span class="gym-tag">REST</span></div>
+    </div>
+
+    <div class="card card-glow" style="animation-delay:0.45s">
+      <div class="card-label"><div class="dot" style="background:var(--amber)"></div>Week Stats</div>
+      <div class="market-stat"><span class="market-name">Pipeline runs</span><span class="market-val" id="m-pipeline">0</span></div>
+      <div class="market-stat"><span class="market-name">Images generated</span><span class="market-val" id="m-images">0</span></div>
+      <div class="market-stat"><span class="market-name">Gym sessions</span><span class="market-val" id="m-gym">0</span></div>
+      <div class="market-stat"><span class="market-name">API spend</span><span class="market-val" id="m-spend">$0.00</span></div>
+      <div class="market-stat"><span class="market-name">Current model</span><span class="market-val" id="m-model" style="font-size:10px">--</span></div>
+    </div>
+  </div>
+
+  <!-- ACTIONS -->
+  <div class="actions-grid">
+    <button class="action-btn" onclick="triggerScrape('crypto market overview')"><span class="icon">📊</span>Refresh Crypto</button>
+    <button class="action-btn" onclick="triggerScrape('stock market summary')"><span class="icon">📈</span>Refresh Stocks</button>
+    <button class="action-btn" onclick="triggerScrape('trending tech')"><span class="icon">🔥</span>Trending</button>
+    <button class="action-btn" onclick="postBusy('Running pipeline...')"><span class="icon">🎨</span>Run Pipeline</button>
+    <button class="action-btn" onclick="postBusy('Fetching weather...')"><span class="icon">🌤️</span>Weather</button>
+  </div>
+
+  <div class="footer">
+    <span>CLAWBOT v2026.3 · OPENCLAW · SCRAPER AGENT · PEAKHURST SYD</span>
+    <span id="footer-ip">0.0.0.0:8080</span>
+  </div>
+</div>
+
+<script>
+function pad(n){return String(n).padStart(2,'0')}
+function getSydneyTime(){const n=new Date();return new Date(n.toLocaleString('en-US',{timeZone:'Australia/Sydney'}))}
+function fmt$(n){if(!n||n===0)return'$0';if(n>=1e12)return'$'+(n/1e12).toFixed(2)+'T';if(n>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(n>=1e6)return'$'+(n/1e6).toFixed(1)+'M';return'$'+n.toLocaleString(undefined,{maximumFractionDigits:2})}
+
+// ── CLOCK ──
+function updateClock(){
+  const t=getSydneyTime();
+  document.getElementById('live-time').textContent=pad(t.getHours())+':'+pad(t.getMinutes())+':'+pad(t.getSeconds());
+  const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('live-date').textContent=days[t.getDay()]+' '+t.getDate()+' '+months[t.getMonth()]+' '+t.getFullYear();
+
+  const pct=Math.round(((t.getHours()*60+t.getMinutes())/1440)*100);
+  document.getElementById('day-fill').style.width=pct+'%';
+
+  // Gym highlight
+  const gymIds=['g7','g1','g2','g3','g4','g5','g6'];
+  const restDays=[0,3,5,6];
+  gymIds.forEach((id,i)=>{const el=document.getElementById(id);el.className='gym-row'+(restDays.includes(i)?' rest':'')});
+  document.getElementById(gymIds[t.getDay()]).classList.add('today');
+
+  // Schedule
+  const sched=[{m:390,label:'Morning blast',id:'sr0'},{m:480,label:'Work block',id:'sr1'},{m:720,label:'Gym reminder',id:'sr2'},{m:1260,label:'End of day',id:'sr3'}];
+  const now=t.getHours()*60+t.getMinutes();
+  document.querySelectorAll('.schedule-row').forEach(el=>{el.className='schedule-row'});
+  let next=null;
+  for(const s of sched){if(s.m>now){next=s;break}}
+  if(next){
+    document.getElementById('next-event').textContent=next.label+' at '+pad(Math.floor(next.m/60))+':'+pad(next.m%60);
+    document.getElementById(next.id).classList.add('next');
+  }else{
+    document.getElementById('next-event').textContent='All done for today';
+  }
+}
+
+// ── BOT STATE ──
+function setBusy(msg){
+  document.getElementById('action-text').textContent=msg;
+  document.getElementById('action-icon').textContent='◉';
+  document.getElementById('action-icon').style.color='var(--amber)';
+  document.getElementById('thinking').style.display='flex';
+  document.getElementById('bot-badge').textContent='THINKING...';
+  document.getElementById('bot-avatar').className='bot-avatar busy';
+  document.getElementById('lobster-wrap').classList.add('active');
+  document.getElementById('lob-task').textContent=msg.substring(0,35).toUpperCase();
+}
+function setIdle(){
+  document.getElementById('action-text').textContent='Idle — waiting for instructions';
+  document.getElementById('action-icon').textContent='▶';
+  document.getElementById('action-icon').style.color='var(--green)';
+  document.getElementById('thinking').style.display='none';
+  document.getElementById('bot-badge').textContent='CLAWBOT ONLINE';
+  document.getElementById('bot-avatar').className='bot-avatar idle';
+  document.getElementById('lobster-wrap').classList.remove('active');
+}
+
+function addLog(msg,type){
+  const t=getSydneyTime();
+  const time=pad(t.getHours())+':'+pad(t.getMinutes())+':'+pad(t.getSeconds());
+  const c=document.getElementById('log-container');
+  const e=document.createElement('div');
+  e.className='log-entry';
+  e.innerHTML='<span class="log-time">'+time+'</span><span class="'+(type||'log-ok')+'">'+msg+'</span>';
+  c.insertBefore(e,c.firstChild);
+  while(c.children.length>12)c.removeChild(c.lastChild);
+}
+
+function postBusy(msg){
+  fetch('/status/busy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
+  setBusy(msg);addLog('Command: '+msg,'log-active');
+  setTimeout(()=>{fetch('/status/idle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Done'})});setIdle();addLog('Complete','log-ok')},3000);
+}
+
+function triggerScrape(query){
+  setBusy('Scraping: '+query);
+  addLog('Scrape: '+query,'log-active');
+  fetch('/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:query})})
+    .then(()=>{setTimeout(()=>{setIdle();addLog('Scrape complete','log-ok');fetchCrypto();fetchStocks()},8000)})
+    .catch(()=>{setIdle();addLog('Scrape failed','log-err')});
+}
+
+// ── POLLING ──
+let lastState='idle';
+function pollStatus(){
+  fetch('/api/status').then(r=>r.json()).then(d=>{
+    if(d.state==='busy'&&lastState!=='busy'){setBusy(d.message||'Processing...')}
+    else if(d.state==='idle'&&lastState==='busy'){setIdle();addLog('Task complete','log-ok');fetchStats()}
+    if(d.state==='busy')document.getElementById('lob-task').textContent=(d.message||'...').substring(0,35).toUpperCase();
+    lastState=d.state;
+  }).catch(()=>{});
+}
+
+function pollActivity(){
+  fetch('/api/activity').then(r=>r.json()).then(d=>{
+    if(!d.log||!d.log.length)return;
+    const c=document.getElementById('log-container');
+    c.innerHTML='';
+    d.log.slice(0,10).forEach(entry=>{
+      const e=document.createElement('div');
+      e.className='log-entry';
+      e.innerHTML='<span class="log-time">'+entry.time+'</span><span class="log-'+(entry.level||'ok')+'">'+entry.msg+'</span>';
+      c.appendChild(e);
+    });
+  }).catch(()=>{});
+}
+
+// ── SYSTEM STATS ──
+function fetchSystem(){
+  fetch('/api/system').then(r=>r.json()).then(d=>{
+    document.getElementById('sys-cpu').textContent=d.cpu_pct+'%';
+    document.getElementById('sys-cpu-bar').style.width=d.cpu_pct+'%';
+    document.getElementById('sys-cpu-bar').className='sys-bar-fill '+(d.cpu_pct>80?'fill-red':d.cpu_pct>50?'fill-amber':'fill-green');
+    document.getElementById('sys-cpu-sub').textContent='Load: '+d.load_1m;
+
+    document.getElementById('sys-ram').textContent=d.ram_pct+'%';
+    document.getElementById('sys-ram-sub').textContent=d.ram_used_gb+' / '+d.ram_total_gb+' GB';
+    document.getElementById('sys-ram-bar').style.width=d.ram_pct+'%';
+
+    document.getElementById('sys-disk').textContent=d.disk_pct+'%';
+    document.getElementById('sys-disk-sub').textContent=d.disk_used_gb+' / '+d.disk_total_gb+' GB';
+    document.getElementById('sys-disk-bar').style.width=d.disk_pct+'%';
+
+    if(d.cpu_temp){
+      document.getElementById('sys-temp').textContent=d.cpu_temp+'°';
+      document.getElementById('sys-temp-bar').style.width=Math.min(d.cpu_temp,100)+'%';
+      document.getElementById('sys-temp-bar').className='sys-bar-fill '+(d.cpu_temp>80?'fill-red':d.cpu_temp>60?'fill-amber':'fill-green');
+    }else{
+      document.getElementById('sys-temp').textContent='N/A';
+    }
+
+    document.getElementById('sys-uptime').textContent=d.uptime;
+    document.getElementById('sys-procs').textContent=d.processes+' processes';
+    document.getElementById('sys-net').textContent=(d.net_rx_mb/1024).toFixed(1)+'G';
+    document.getElementById('sys-net-sub').textContent='↓ '+(d.net_rx_mb/1024).toFixed(1)+'G · ↑ '+(d.net_tx_mb/1024).toFixed(1)+'G';
+
+    document.getElementById('sys-badge').textContent=d.openclaw_running?'SYSTEM OK':'OPENCLAW DOWN';
+  }).catch(()=>{});
+}
+
+// ── CRYPTO ──
+function fetchCrypto(){
+  fetch('/api/crypto').then(r=>r.json()).then(d=>{
+    if(!d||!d.top_coins||!d.top_coins.length)return;
+
+    // Market stats
+    if(d.total_market_cap)document.getElementById('mk-cap').textContent=d.total_market_cap;
+    if(d.btc_dominance)document.getElementById('mk-btc').textContent=d.btc_dominance;
+    if(d.change_24h){
+      const el=document.getElementById('mk-change');
+      el.textContent=d.change_24h;
+      el.className='market-val '+(d.change_24h.includes('+')?'up':'down');
+    }
+
+    // Fear & Greed
+    if(d.fear_greed){
+      const parts=d.fear_greed.split('--').map(s=>s.trim());
+      const val=parseInt(parts[0])||0;
+      const label=parts[1]||d.fear_greed;
+      document.getElementById('fg-value').textContent=val;
+      document.getElementById('fg-label').textContent=label;
+      document.getElementById('fg-bar').style.width=val+'%';
+      const color=val<25?'var(--red)':val<45?'var(--amber)':val<55?'var(--text2)':val<75?'var(--green)':'var(--green)';
+      document.getElementById('fg-value').style.color=color;
+    }
+
+    // Coin table
+    const container=document.getElementById('crypto-coins');
+    container.innerHTML='';
+    d.top_coins.slice(0,10).forEach(coin=>{
+      const chg=coin.change||0;
+      const cls=chg>0?'up':chg<0?'down':'neutral';
+      const arrow=chg>0?'▲':chg<0?'▼':'';
+      const row=document.createElement('div');
+      row.className='coin-row';
+      row.innerHTML=`
+        <span class="coin-rank">${coin.rank||''}</span>
+        <span class="coin-sym">${coin.symbol||''}</span>
+        <span class="coin-name">${coin.name||''}</span>
+        <span class="coin-price">$${(coin.price||0).toLocaleString(undefined,{maximumFractionDigits:coin.price<1?4:2})}</span>
+        <span class="coin-chg ${cls}">${arrow} ${Math.abs(chg).toFixed(1)}%</span>
+      `;
+      container.appendChild(row);
+    });
+  }).catch(()=>{});
+}
+
+// ── STOCKS ──
+function fetchStocks(){
+  fetch('/api/stocks').then(r=>r.json()).then(d=>{
+    if(d.indices&&d.indices.length){
+      const container=document.getElementById('stock-indices');
+      container.innerHTML='';
+      d.indices.forEach(idx=>{
+        const chg=idx.change_pct||0;
+        const cls=chg>0?'up':chg<0?'down':'neutral';
+        const row=document.createElement('div');
+        row.className='index-row';
+        row.innerHTML=`<span class="index-name">${idx.name}</span><span class="index-price">${typeof idx.price==='number'?idx.price.toLocaleString(undefined,{maximumFractionDigits:0}):idx.price||'--'}</span><span class="index-chg ${cls}">${chg>0?'+':''}${chg.toFixed(2)}%</span>`;
+        container.appendChild(row);
+      });
+    }
+    if(d.gainers&&d.gainers.length){
+      const container=document.getElementById('stock-movers');
+      container.innerHTML='';
+      d.gainers.slice(0,5).forEach(g=>{
+        const row=document.createElement('div');
+        row.className='index-row';
+        row.innerHTML=`<span class="index-name up">${g.symbol||''}</span><span class="index-price">${g.price||''}</span><span class="index-chg up">${g.change_pct||''}</span>`;
+        container.appendChild(row);
+      });
+    }
+  }).catch(()=>{});
+}
+
+// ── MARKET AGE ──
+function fetchMarketAge(){
+  fetch('/api/market_age').then(r=>r.json()).then(d=>{
+    if(d.last_fetch){
+      const fetched=new Date(d.last_fetch);
+      const now=new Date();
+      const mins=Math.round((now-fetched)/60000);
+      document.getElementById('mk-age').textContent=mins<1?'just now':mins+'m ago';
+    }
+  }).catch(()=>{});
+}
+
+function fetchStats(){
+  fetch('/api/stats').then(r=>r.json()).then(d=>{
+    document.getElementById('m-pipeline').textContent=d.pipeline_runs_week||0;
+    document.getElementById('m-images').textContent=d.images_total||0;
+    document.getElementById('m-gym').textContent=d.gym_sessions_week||0;
+    document.getElementById('m-spend').textContent='$'+(d.api_spend_total||0).toFixed(2);
+    document.getElementById('m-model').textContent=d.current_model||'--';
+    document.getElementById('current-model').textContent=d.current_model||'--';
+  }).catch(()=>{});
+}
+
+// ── PIPELINE SIMULATION ──
+function setStep(n,state){const el=document.getElementById('s'+n);el.className='step-num '+(state||'');el.textContent=state==='done'?'✓':'0'+n}
+function simulatePipeline(){
+  setBusy('Running pipeline...');addLog('Pipeline started','log-active');
+  setStep(1,'active');document.getElementById('s1-d').textContent='Generating...';
+  setTimeout(()=>document.getElementById('s1-b').style.width='100%',100);
+  setTimeout(()=>{setStep(1,'done');document.getElementById('s1-d').textContent='Done ✓';addLog('Images generated','log-ok');setStep(2,'active');document.getElementById('s2-d').textContent='Encoding...';setTimeout(()=>document.getElementById('s2-b').style.width='100%',100)},2500);
+  setTimeout(()=>{setStep(2,'done');document.getElementById('s2-d').textContent='Done ✓';addLog('Videos assembled','log-ok');setStep(3,'active');document.getElementById('s3-d').textContent='Uploading...';setTimeout(()=>document.getElementById('s3-b').style.width='100%',100)},5000);
+  setTimeout(()=>{setStep(3,'done');document.getElementById('s3-d').textContent='Done ✓';addLog('Videos scheduled','log-ok');setIdle();fetchStats()},8000);
+}
+function resetPipeline(){[1,2,3].forEach(n=>{setStep(n,'');document.getElementById('s'+n+'-b').style.width='0%'});document.getElementById('s1-d').textContent='DALL-E 3 · idle';document.getElementById('s2-d').textContent='FFmpeg · idle';document.getElementById('s3-d').textContent='YouTube API · idle';addLog('Pipeline reset','log-warn');setIdle()}
+
+// ── INIT ──
+updateClock();setInterval(updateClock,1000);
+setInterval(pollStatus,2000);
+setInterval(pollActivity,5000);
+setInterval(fetchSystem,3000);
+setInterval(fetchCrypto,60000);
+setInterval(fetchStocks,60000);
+setInterval(fetchMarketAge,30000);
+fetchStats();setInterval(fetchStats,30000);
+
+// Initial fetches
+setTimeout(fetchSystem,500);
+setTimeout(fetchCrypto,1000);
+setTimeout(fetchStocks,1500);
+setTimeout(fetchMarketAge,2000);
+setTimeout(pollActivity,2500);
+</script>
+</body>
+</html>
