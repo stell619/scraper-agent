@@ -1,383 +1,401 @@
-from flask import Flask, send_from_directory, jsonify, request
-import os
+#!/usr/bin/env python3
+"""
+SCRAPER AGENT — Dashboard Server
+Live web dashboard showing bot status, market data, system stats, activity log.
+
+USAGE:
+    python dashboard-serve.py
+
+Then open http://localhost:8080
+"""
+
 import json
+import os
+import re
 import subprocess
 import threading
 import time
-import re
-from datetime import datetime, timedelta
 from collections import deque
+from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, jsonify, request, send_from_directory
+
+import config
 
 app = Flask(__name__)
-DASHBOARD_DIR = os.path.expanduser('~/dashboard')
-DATA_DIR = os.path.expanduser('~/openclaw-data')
-ART_DIR = os.path.expanduser('~/art-channel')
-SCRAPER_DIR = os.path.expanduser('~/scraper-agent')
 
+# ── Paths ─────────────────────────────────────────────────────
+DASHBOARD_DIR = Path(os.environ.get("DASHBOARD_DIR", Path(__file__).parent))
+SCRAPER_DIR   = Path(__file__).parent
+DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", 8080))
+
+# ── State ─────────────────────────────────────────────────────
 bot_state = {
-    'state': 'idle',
-    'message': 'Idle — waiting for instructions',
-    'model': 'anthropic/claude-haiku-4-5',
-    'last_updated': datetime.now().isoformat(),
-    'sessions_today': 0,
-    'tokens_today': 0,
+    "state":          "idle",
+    "message":        "Idle — waiting for instructions",
+    "model":          config.LLM_BACKEND,
+    "last_updated":   datetime.now().isoformat(),
+    "sessions_today": 0,
+    "tokens_today":   0,
 }
 
-activity_log = deque(maxlen=30)
-market_cache = {'crypto': None, 'stocks': None, 'last_fetch': None}
-system_cache = {'data': None, 'last_fetch': None}
+activity_log  = deque(maxlen=50)
+market_cache  = {"crypto": None, "stocks": None, "last_fetch": None}
+system_cache  = {"data": None,   "last_fetch": None}
 
-def read_file_lines(path):
-    try:
-        with open(os.path.expanduser(path)) as f:
-            return f.readlines()
-    except:
-        return []
 
-def get_week_start():
-    today = datetime.now()
-    start = today - timedelta(days=today.weekday())
-    return start.strftime('%Y-%m-%d')
+# ── Helpers ───────────────────────────────────────────────────
 
-def log_activity(msg, level='ok'):
-    t = datetime.now().strftime('%H:%M:%S')
-    activity_log.appendleft({'time': t, 'msg': msg, 'level': level})
+def log_activity(msg: str, level: str = "ok"):
+    t = datetime.now().strftime("%H:%M:%S")
+    activity_log.appendleft({"time": t, "msg": msg, "level": level})
 
-def get_system_stats():
-    now = time.time()
-    if system_cache['data'] and system_cache['last_fetch'] and (now - system_cache['last_fetch']) < 5:
-        return system_cache['data']
-    stats = {}
-    try:
-        with open('/proc/stat') as f:
-            line = f.readline()
-        parts = line.split()
-        idle = int(parts[4])
-        total = sum(int(p) for p in parts[1:])
-        time.sleep(0.1)
-        with open('/proc/stat') as f:
-            line2 = f.readline()
-        parts2 = line2.split()
-        idle2 = int(parts2[4])
-        total2 = sum(int(p) for p in parts2[1:])
-        diff_idle = idle2 - idle
-        diff_total = total2 - total
-        stats['cpu_pct'] = round((1 - diff_idle / max(diff_total, 1)) * 100, 1) if diff_total > 0 else 0
-    except:
-        stats['cpu_pct'] = 0
-    stats['cpu_cores'] = os.cpu_count() or 0
-    try:
-        load = os.getloadavg()
-        stats['load_1m'] = round(load[0], 2)
-        stats['load_5m'] = round(load[1], 2)
-        stats['load_15m'] = round(load[2], 2)
-    except:
-        stats['load_1m'] = 0
-    try:
-        with open('/proc/meminfo') as f:
-            mem = {}
-            for line in f:
-                parts = line.split()
-                mem[parts[0].rstrip(':')] = int(parts[1])
-        total = mem.get('MemTotal', 0) / 1024 / 1024
-        available = mem.get('MemAvailable', 0) / 1024 / 1024
-        used = total - available
-        stats['ram_total_gb'] = round(total, 1)
-        stats['ram_used_gb'] = round(used, 1)
-        stats['ram_pct'] = round((used / total) * 100, 1) if total > 0 else 0
-    except:
-        stats['ram_total_gb'] = 0
-        stats['ram_used_gb'] = 0
-        stats['ram_pct'] = 0
-    try:
-        st = os.statvfs('/')
-        total = st.f_blocks * st.f_frsize / (1024**3)
-        free = st.f_bfree * st.f_frsize / (1024**3)
-        used = total - free
-        stats['disk_total_gb'] = round(total, 0)
-        stats['disk_used_gb'] = round(used, 0)
-        stats['disk_pct'] = round((used / total) * 100, 1) if total > 0 else 0
-    except:
-        stats['disk_total_gb'] = 0
-        stats['disk_used_gb'] = 0
-        stats['disk_pct'] = 0
-    try:
-        with open('/proc/uptime') as f:
-            uptime_secs = float(f.read().split()[0])
-        hours = int(uptime_secs // 3600)
-        mins = int((uptime_secs % 3600) // 60)
-        stats['uptime'] = f'{hours}h {mins}m'
-    except:
-        stats['uptime'] = '?'
-    try:
-        temps = []
-        thermal_dir = '/sys/class/thermal/'
-        if os.path.exists(thermal_dir):
-            for zone in os.listdir(thermal_dir):
-                temp_file = os.path.join(thermal_dir, zone, 'temp')
-                if os.path.exists(temp_file):
-                    with open(temp_file) as f:
-                        temp = int(f.read().strip()) / 1000
-                        if 0 < temp < 120:
-                            temps.append(temp)
-        stats['cpu_temp'] = round(max(temps), 1) if temps else None
-    except:
-        stats['cpu_temp'] = None
-    try:
-        result = subprocess.run(['pgrep', '-f', 'openclaw-gateway'], capture_output=True, text=True, timeout=2)
-        stats['openclaw_running'] = result.returncode == 0
-    except:
-        stats['openclaw_running'] = False
-    try:
-        with open('/proc/net/dev') as f:
-            lines = f.readlines()
-        total_rx = 0
-        total_tx = 0
-        for line in lines[2:]:
-            parts = line.split()
-            if parts[0].rstrip(':') not in ('lo',):
-                total_rx += int(parts[1])
-                total_tx += int(parts[9])
-        stats['net_rx_mb'] = round(total_rx / (1024**2), 1)
-        stats['net_tx_mb'] = round(total_tx / (1024**2), 1)
-    except:
-        stats['net_rx_mb'] = 0
-        stats['net_tx_mb'] = 0
-    try:
-        stats['processes'] = len([p for p in os.listdir('/proc') if p.isdigit()])
-    except:
-        stats['processes'] = 0
-    system_cache['data'] = stats
-    system_cache['last_fetch'] = now
-    return stats
 
-def run_scraper(query):
+def run_scraper(query: str) -> str:
+    """Run a scraper query via the agent CLI."""
     try:
-        cmd = f'cd {SCRAPER_DIR} && source venv/bin/activate && python agent.py --no-llm "{query}"'
-        result = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True, timeout=120)
+        venv_python = SCRAPER_DIR / "venv" / "bin" / "python"
+        python_cmd  = str(venv_python) if venv_python.exists() else "python3"
+        result = subprocess.run(
+            [python_cmd, str(SCRAPER_DIR / "agent.py"), "--no-llm", query],
+            capture_output=True, text=True, timeout=120, cwd=str(SCRAPER_DIR)
+        )
         return result.stdout
     except subprocess.TimeoutExpired:
-        return 'ERROR: Scraper timed out'
+        return "ERROR: Scraper timed out"
     except Exception as e:
-        return f'ERROR: {e}'
+        return f"ERROR: {e}"
 
-def fetch_market_data():
+
+# ── System Stats ──────────────────────────────────────────────
+
+def get_system_stats() -> dict:
+    """Read system metrics from /proc — no external tools needed."""
+    now = time.time()
+    if (system_cache["data"]
+            and system_cache["last_fetch"]
+            and now - system_cache["last_fetch"] < 5):
+        return system_cache["data"]
+
+    stats = {}
+
+    # CPU usage
+    try:
+        with open("/proc/stat") as f:
+            line1 = f.readline()
+        time.sleep(0.1)
+        with open("/proc/stat") as f:
+            line2 = f.readline()
+        p1 = [int(x) for x in line1.split()[1:]]
+        p2 = [int(x) for x in line2.split()[1:]]
+        idle_diff  = p2[3] - p1[3]
+        total_diff = sum(p2) - sum(p1)
+        stats["cpu_pct"] = round((1 - idle_diff / max(total_diff, 1)) * 100, 1)
+    except Exception:
+        stats["cpu_pct"] = 0
+
+    stats["cpu_cores"] = os.cpu_count() or 0
+
+    # Load average
+    try:
+        load = os.getloadavg()
+        stats["load_1m"]  = round(load[0], 2)
+        stats["load_5m"]  = round(load[1], 2)
+        stats["load_15m"] = round(load[2], 2)
+    except Exception:
+        stats["load_1m"] = stats["load_5m"] = stats["load_15m"] = 0
+
+    # RAM
+    try:
+        mem = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split()
+                mem[parts[0].rstrip(":")] = int(parts[1])
+        total_gb = mem.get("MemTotal", 0) / 1024 / 1024
+        avail_gb = mem.get("MemAvailable", 0) / 1024 / 1024
+        used_gb  = total_gb - avail_gb
+        stats["ram_total_gb"] = round(total_gb, 1)
+        stats["ram_used_gb"]  = round(used_gb, 1)
+        stats["ram_pct"]      = round(used_gb / max(total_gb, 1) * 100, 1)
+    except Exception:
+        stats["ram_total_gb"] = stats["ram_used_gb"] = stats["ram_pct"] = 0
+
+    # Disk
+    try:
+        st = os.statvfs("/")
+        total_gb = st.f_blocks * st.f_frsize / (1024 ** 3)
+        free_gb  = st.f_bfree  * st.f_frsize / (1024 ** 3)
+        used_gb  = total_gb - free_gb
+        stats["disk_total_gb"] = round(total_gb)
+        stats["disk_used_gb"]  = round(used_gb)
+        stats["disk_pct"]      = round(used_gb / max(total_gb, 1) * 100, 1)
+    except Exception:
+        stats["disk_total_gb"] = stats["disk_used_gb"] = stats["disk_pct"] = 0
+
+    # Uptime
+    try:
+        with open("/proc/uptime") as f:
+            secs = float(f.read().split()[0])
+        h, m = int(secs // 3600), int((secs % 3600) // 60)
+        stats["uptime"] = f"{h}h {m}m"
+    except Exception:
+        stats["uptime"] = "?"
+
+    # CPU temp
+    try:
+        temps = []
+        thermal = "/sys/class/thermal"
+        if os.path.exists(thermal):
+            for zone in os.listdir(thermal):
+                tf = os.path.join(thermal, zone, "temp")
+                if os.path.exists(tf):
+                    with open(tf) as f:
+                        t = int(f.read().strip()) / 1000
+                    if 0 < t < 120:
+                        temps.append(t)
+        stats["cpu_temp"] = round(max(temps), 1) if temps else None
+    except Exception:
+        stats["cpu_temp"] = None
+
+    # Process count
+    try:
+        stats["processes"] = len([p for p in os.listdir("/proc") if p.isdigit()])
+    except Exception:
+        stats["processes"] = 0
+
+    # Network I/O
+    try:
+        total_rx = total_tx = 0
+        with open("/proc/net/dev") as f:
+            for line in f.readlines()[2:]:
+                parts = line.split()
+                if parts[0].rstrip(":") != "lo":
+                    total_rx += int(parts[1])
+                    total_tx += int(parts[9])
+        stats["net_rx_mb"] = round(total_rx / (1024 ** 2), 1)
+        stats["net_tx_mb"] = round(total_tx / (1024 ** 2), 1)
+    except Exception:
+        stats["net_rx_mb"] = stats["net_tx_mb"] = 0
+
+    system_cache["data"]       = stats
+    system_cache["last_fetch"] = now
+    return stats
+
+
+# ── Market Data ───────────────────────────────────────────────
+
+def _load_cache_files() -> list:
+    """Load all JSON files from the scraper cache directory."""
+    results = []
+    cache_dir = SCRAPER_DIR / ".cache"
+    if not cache_dir.exists():
+        return results
+    for f in cache_dir.glob("*.json"):
+        try:
+            results.append(json.loads(f.read_text()))
+        except Exception:
+            continue
+    return results
+
+
+def parse_crypto_from_cache() -> dict:
+    data = {
+        "total_market_cap": "", "btc_dominance": "",
+        "change_24h": "", "fear_greed": "",
+        "top_coins": [], "gainers": [], "losers": [],
+    }
+    for d in _load_cache_files():
+        if "global" in d:
+            g   = d["global"]
+            cap = g.get("total_market_cap_usd", 0)
+            if cap > 0:
+                data["total_market_cap"] = f"${cap / 1e12:.2f}T"
+            data["btc_dominance"] = f"{g.get('btc_dominance', 0)}%"
+            data["change_24h"]    = f"{g.get('market_cap_change_24h', 0):+.2f}%"
+            data["fear_greed"]    = d.get("fear_greed", "")
+            data["gainers"] = [
+                {"symbol": c.get("symbol"), "price": c.get("price"), "change": c.get("change_24h")}
+                for c in d.get("top_gainers", [])[:5]
+            ]
+            data["losers"] = [
+                {"symbol": c.get("symbol"), "price": c.get("price"), "change": c.get("change_24h")}
+                for c in d.get("top_losers", [])[:5]
+            ]
+        if "coins" in d and not data["top_coins"]:
+            data["top_coins"] = [
+                {
+                    "rank":       c.get("rank"),
+                    "symbol":     c.get("symbol"),
+                    "name":       c.get("name"),
+                    "price":      c.get("price"),
+                    "change":     c.get("change_24h"),
+                    "market_cap": c.get("market_cap"),
+                }
+                for c in d["coins"][:20]
+            ]
+    return data
+
+
+def parse_stocks_from_cache() -> dict:
+    data = {"indices": [], "gainers": [], "losers": []}
+    for d in _load_cache_files():
+        if "indices" in d:
+            data["indices"] = [
+                {"name": name, "price": v.get("price"), "change_pct": v.get("change_pct")}
+                for name, v in d["indices"].items()
+            ]
+            data["gainers"] = d.get("top_gainers", [])[:5]
+            data["losers"]  = d.get("top_losers",  [])[:5]
+    return data
+
+
+def fetch_market_data_loop():
+    """Background thread — refresh market data every 5 minutes."""
     while True:
         try:
-            log_activity('Fetching crypto data...', 'active')
-            crypto_raw = run_scraper('crypto market overview')
-            crypto_data = parse_crypto_output(crypto_raw)
-            market_cache['crypto'] = crypto_data
-            log_activity('Crypto data updated', 'ok')
-            log_activity('Fetching stock data...', 'active')
-            stock_raw = run_scraper('stock market summary')
-            stock_data = parse_stock_output(stock_raw)
-            market_cache['stocks'] = stock_data
-            log_activity('Stock data updated', 'ok')
-            market_cache['last_fetch'] = datetime.now().isoformat()
+            log_activity("Fetching crypto market data...", "active")
+            run_scraper("crypto market overview")
+            market_cache["crypto"] = parse_crypto_from_cache()
+            log_activity("Crypto data updated", "ok")
+
+            log_activity("Fetching stock market data...", "active")
+            run_scraper("stock market summary")
+            market_cache["stocks"] = parse_stocks_from_cache()
+            log_activity("Stock data updated", "ok")
+
+            market_cache["last_fetch"] = datetime.now().isoformat()
         except Exception as e:
-            log_activity(f'Market fetch error: {e}', 'err')
+            log_activity(f"Market fetch error: {e}", "err")
+
         time.sleep(300)
 
-def parse_crypto_output(raw):
-    data = {'total_market_cap': '', 'btc_dominance': '', 'change_24h': '', 'fear_greed': '', 'top_coins': [], 'gainers': [], 'losers': []}
-    try:
-        cache_dir = os.path.join(SCRAPER_DIR, '.cache')
-        if os.path.exists(cache_dir):
-            for f in os.listdir(cache_dir):
-                fpath = os.path.join(cache_dir, f)
-                try:
-                    with open(fpath) as fp:
-                        d = json.load(fp)
-                    if 'global' in d:
-                        g = d['global']
-                        cap = g.get('total_market_cap_usd', 0)
-                        if cap > 0:
-                            data['total_market_cap'] = f'${cap/1e12:.2f}T'
-                        data['btc_dominance'] = f"{g.get('btc_dominance', 0)}%"
-                        data['change_24h'] = f"{g.get('market_cap_change_24h', 0):+.2f}%"
-                        data['fear_greed'] = d.get('fear_greed', '')
-                        for coin in d.get('top_gainers', [])[:5]:
-                            data['gainers'].append({'symbol': coin.get('symbol', ''), 'price': coin.get('price', 0), 'change': coin.get('change_24h', 0)})
-                        for coin in d.get('top_losers', [])[:5]:
-                            data['losers'].append({'symbol': coin.get('symbol', ''), 'price': coin.get('price', 0), 'change': coin.get('change_24h', 0)})
-                    if 'coins' in d and not data['top_coins']:
-                        for coin in d['coins'][:20]:
-                            data['top_coins'].append({'rank': coin.get('rank', 0), 'symbol': coin.get('symbol', ''), 'name': coin.get('name', ''), 'price': coin.get('price', 0), 'change': coin.get('change_24h', 0), 'market_cap': coin.get('market_cap', 0)})
-                except:
-                    continue
-    except:
-        pass
-    if not data['total_market_cap']:
-        for line in raw.split('\n'):
-            if 'Total Market Cap' in line:
-                m = re.search(r'\$[\d.]+T', line)
-                if m: data['total_market_cap'] = m.group()
-            elif 'BTC Dominance' in line:
-                m = re.search(r'[\d.]+%', line)
-                if m: data['btc_dominance'] = m.group()
-            elif '24h Change' in line:
-                m = re.search(r'[+-][\d.]+%', line)
-                if m: data['change_24h'] = m.group()
-            elif 'Fear' in line and 'Greed' in line:
-                data['fear_greed'] = line.split(':')[-1].strip() if ':' in line else line.strip()
-    return data
 
-def parse_stock_output(raw):
-    data = {'indices': [], 'gainers': [], 'losers': []}
-    try:
-        cache_dir = os.path.join(SCRAPER_DIR, '.cache')
-        if os.path.exists(cache_dir):
-            for f in os.listdir(cache_dir):
-                fpath = os.path.join(cache_dir, f)
-                try:
-                    with open(fpath) as fp:
-                        d = json.load(fp)
-                    if 'indices' in d:
-                        for name, vals in d['indices'].items():
-                            data['indices'].append({'name': name, 'price': vals.get('price', 0), 'change_pct': vals.get('change_pct', 0)})
-                        for g in d.get('top_gainers', [])[:5]:
-                            data['gainers'].append(g)
-                        for l in d.get('top_losers', [])[:5]:
-                            data['losers'].append(l)
-                except:
-                    continue
-    except:
-        pass
-    return data
+# ── Routes ────────────────────────────────────────────────────
 
-@app.route('/')
+@app.route("/")
 def dashboard():
-    return send_from_directory(DASHBOARD_DIR, 'index.html')
+    index = DASHBOARD_DIR / "dashboard-index.html"
+    if index.exists():
+        return send_from_directory(str(DASHBOARD_DIR), "dashboard-index.html")
+    return "<h1>Dashboard not found</h1><p>Set DASHBOARD_DIR in .env</p>", 404
 
-@app.route('/<path:filename>')
+
+@app.route("/<path:filename>")
 def static_files(filename):
-    return send_from_directory(DASHBOARD_DIR, filename)
+    return send_from_directory(str(DASHBOARD_DIR), filename)
 
-@app.route('/webhook/openclaw', methods=['POST'])
+
+# ── Webhook (OpenClaw integration) ────────────────────────────
+
+@app.route("/webhook/openclaw", methods=["POST"])
 def openclaw_webhook():
-    data = request.json or {}
-    event = data.get('event', '')
-    message = data.get('message', '')
-    if event in ('thinking', 'running', 'tool_call', 'processing'):
-        bot_state['state'] = 'busy'
-        bot_state['message'] = message or 'Processing...'
-        bot_state['last_updated'] = datetime.now().isoformat()
-        log_activity(bot_state['message'], 'active')
-    elif event in ('done', 'idle', 'complete'):
-        bot_state['state'] = 'idle'
-        bot_state['message'] = 'Idle — waiting for instructions'
-        bot_state['last_updated'] = datetime.now().isoformat()
-        bot_state['sessions_today'] = bot_state.get('sessions_today', 0) + 1
-        log_activity(message or 'Task complete', 'ok')
-    elif event == 'model_switch':
-        bot_state['model'] = message
-        log_activity('Model switched to ' + message, 'warn')
-    elif event == 'error':
-        log_activity('Error: ' + message, 'err')
-    return jsonify({'ok': True})
+    data  = request.json or {}
+    event = data.get("event", "")
+    msg   = data.get("message", "")
 
-@app.route('/status/busy', methods=['POST'])
+    if event in ("thinking", "running", "tool_call", "processing"):
+        bot_state.update({"state": "busy", "message": msg or "Processing...",
+                          "last_updated": datetime.now().isoformat()})
+        log_activity(bot_state["message"], "active")
+
+    elif event in ("done", "idle", "complete"):
+        bot_state.update({"state": "idle", "message": "Idle — waiting for instructions",
+                          "last_updated": datetime.now().isoformat(),
+                          "sessions_today": bot_state.get("sessions_today", 0) + 1})
+        log_activity(msg or "Task complete", "ok")
+
+    elif event == "error":
+        log_activity(f"Error: {msg}", "err")
+
+    return jsonify({"ok": True})
+
+
+@app.route("/status/busy", methods=["POST"])
 def set_busy():
-    data = request.json or {}
-    bot_state['state'] = 'busy'
-    bot_state['message'] = data.get('message', 'Processing...')
-    bot_state['last_updated'] = datetime.now().isoformat()
-    log_activity(bot_state['message'], 'active')
-    return jsonify({'ok': True})
+    msg = (request.json or {}).get("message", "Processing...")
+    bot_state.update({"state": "busy", "message": msg,
+                      "last_updated": datetime.now().isoformat()})
+    log_activity(msg, "active")
+    return jsonify({"ok": True})
 
-@app.route('/status/idle', methods=['POST'])
+
+@app.route("/status/idle", methods=["POST"])
 def set_idle():
-    data = request.json or {}
-    msg = data.get('message', 'Task complete')
-    bot_state['state'] = 'idle'
-    bot_state['message'] = 'Idle — waiting for instructions'
-    bot_state['last_updated'] = datetime.now().isoformat()
-    log_activity(msg, 'ok')
-    return jsonify({'ok': True})
+    msg = (request.json or {}).get("message", "Task complete")
+    bot_state.update({"state": "idle", "message": "Idle — waiting for instructions",
+                      "last_updated": datetime.now().isoformat()})
+    log_activity(msg, "ok")
+    return jsonify({"ok": True})
 
-@app.route('/api/status')
-def status():
+
+# ── Data API ──────────────────────────────────────────────────
+
+@app.route("/api/status")
+def api_status():
     return jsonify(bot_state)
 
-@app.route('/api/activity')
-def activity():
-    return jsonify({'log': list(activity_log)})
 
-@app.route('/api/system')
-def system():
+@app.route("/api/activity")
+def api_activity():
+    return jsonify({"log": list(activity_log)})
+
+
+@app.route("/api/system")
+def api_system():
     return jsonify(get_system_stats())
 
-@app.route('/api/crypto')
-def crypto():
-    return jsonify(market_cache.get('crypto') or {})
 
-@app.route('/api/stocks')
-def stocks():
-    return jsonify(market_cache.get('stocks') or {})
+@app.route("/api/crypto")
+def api_crypto():
+    return jsonify(market_cache.get("crypto") or {})
 
-@app.route('/api/market_age')
-def market_age():
-    return jsonify({'last_fetch': market_cache.get('last_fetch')})
 
-@app.route('/api/stats')
-def stats():
-    week_start = get_week_start()
-    gym_lines = read_file_lines('~/openclaw-data/gym-log.txt')
-    gym_this_week = sum(1 for l in gym_lines if week_start[:7] in l and 'completed' in l.lower())
-    pipeline_lines = read_file_lines('~/art-channel/pipeline.log')
-    pipeline_this_week = sum(1 for l in pipeline_lines if week_start[:7] in l)
-    paintings_dir = os.path.expanduser('~/art-channel/paintings_output')
-    try:
-        images_total = len([f for f in os.listdir(paintings_dir) if f.endswith(('.png', '.jpg'))])
-    except:
-        images_total = 0
-    api_spend = 0.0
-    try:
-        with open(os.path.expanduser('~/art-channel/generation_log.json')) as f:
-            gen_log = json.load(f)
-            successful = sum(1 for g in gen_log if g.get('status') == 'success')
-            api_spend = round(successful * 0.08, 2)
-    except:
-        pass
-    current_model = bot_state['model']
-    try:
-        with open(os.path.expanduser('~/.openclaw/openclaw.json')) as f:
-            config = json.load(f)
-            current_model = config.get('agents', {}).get('defaults', {}).get('model', {}).get('primary', current_model)
-            bot_state['model'] = current_model
-    except:
-        pass
-    return jsonify({
-        'pipeline_runs_week': pipeline_this_week,
-        'images_total': images_total,
-        'gym_sessions_week': gym_this_week,
-        'api_spend_total': api_spend,
-        'current_model': current_model,
-    })
+@app.route("/api/stocks")
+def api_stocks():
+    return jsonify(market_cache.get("stocks") or {})
 
-@app.route('/api/scrape', methods=['POST'])
-def trigger_scrape():
-    data = request.json or {}
-    query = data.get('query', '')
+
+@app.route("/api/market_age")
+def api_market_age():
+    return jsonify({"last_fetch": market_cache.get("last_fetch")})
+
+
+@app.route("/api/scrape", methods=["POST"])
+def api_scrape():
+    query = (request.json or {}).get("query", "").strip()
     if not query:
-        return jsonify({'error': 'No query'}), 400
-    bot_state['state'] = 'busy'
-    bot_state['message'] = f'Scraping: {query}'
-    log_activity(f'Manual scrape: {query}', 'active')
+        return jsonify({"error": "No query provided"}), 400
+
+    bot_state.update({"state": "busy", "message": f"Scraping: {query}"})
+    log_activity(f"Manual scrape: {query}", "active")
+
     def _run():
         run_scraper(query)
-        bot_state['state'] = 'idle'
-        bot_state['message'] = 'Idle — waiting for instructions'
-        log_activity(f'Scrape complete: {query}', 'ok')
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify({'ok': True})
+        bot_state.update({"state": "idle", "message": "Idle — waiting for instructions"})
+        log_activity(f"Scrape complete: {query}", "ok")
+        market_cache["crypto"] = parse_crypto_from_cache()
+        market_cache["stocks"] = parse_stocks_from_cache()
 
-if __name__ == '__main__':
-    log_activity('Dashboard v2 server started', 'ok')
-    log_activity('System stats monitor active', 'ok')
-    market_thread = threading.Thread(target=fetch_market_data, daemon=True)
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "message": f"Scraping '{query}' in background"})
+
+
+# ── Entry Point ───────────────────────────────────────────────
+
+if __name__ == "__main__":
+    log_activity("Dashboard server starting...", "ok")
+    log_activity(f"Scraper dir: {SCRAPER_DIR}", "ok")
+    log_activity(f"LLM backend: {config.LLM_BACKEND}", "ok")
+
+    market_thread = threading.Thread(target=fetch_market_data_loop, daemon=True)
     market_thread.start()
-    log_activity('Market data fetcher started (5min cycle)', 'ok')
-    print('Dashboard v2 running at http://0.0.0.0:8080')
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    log_activity("Market data fetcher started (5min refresh cycle)", "ok")
+
+    print(f"\n🕷️  Scraper Agent Dashboard")
+    print(f"   Running at http://0.0.0.0:{DASHBOARD_PORT}")
+    print(f"   Scraper dir: {SCRAPER_DIR}")
+    print(f"   Press Ctrl+C to stop\n")
+
+    app.run(host="0.0.0.0", port=DASHBOARD_PORT, debug=False)
