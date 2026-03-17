@@ -4,9 +4,11 @@ SCRAPER AGENT — AI Brain
 Talk to this. It understands what you want, runs scrapers, reports back.
 
 USAGE:
-    python agent.py                          (interactive chat)
-    python agent.py "find trending crypto"   (one-shot)
-    python agent.py --no-llm "crypto movers" (skip LLM)
+    python agent.py                               (interactive chat)
+    python agent.py "find trending crypto"        (one-shot)
+    python agent.py --no-llm "crypto movers"      (skip LLM)
+    python agent.py --no-escalate "some query"    (skip Claude escalation)
+    echo "bitcoin price" | python agent.py --no-escalate -  (stdin)
 
 BACKENDS:
     OpenClaw (uses your existing setup — Haiku)
@@ -15,6 +17,7 @@ BACKENDS:
     No LLM (keyword matching)
 """
 
+import argparse
 import json
 import sys
 import re
@@ -29,6 +32,9 @@ HAS_OLLAMA = False
 HAS_ANTHROPIC = False
 HAS_OPENAI = False
 HAS_OPENCLAW = False
+
+# Set to False via --no-escalate to suppress Claude escalation prompts
+INTERACTIVE = True
 
 try:
     import ollama
@@ -305,6 +311,123 @@ def _keyword_fallback(prompt):
     return json.dumps(commands)
 
 
+# ── Confidence & Escalation ──────────────────────────────────
+
+def confidence_check(commands, original_query):
+    """
+    Returns (is_confident: bool, reason: str)
+
+    Checks multiple signals to decide if Ollama's
+    intent parsing result is trustworthy.
+    """
+    # Signal 1: Empty or no commands
+    if not commands:
+        return False, "no commands were parsed from your query"
+
+    # Signal 2: Keyword mismatch — obvious intent in query
+    # doesn't match any parsed module
+    query_lower = original_query.lower()
+    modules_found = [c.get("module", "") for c in commands]
+
+    keyword_map = {
+        "crypto":  ["btc", "eth", "bitcoin", "ethereum", "crypto",
+                    "sol", "bnb", "coin", "token", "pump", "dump", "market cap"],
+        "finance": ["stock", "nasdaq", "s&p", "nyse", "share",
+                    "dividend", "earnings", "market"],
+        "youtube": ["youtube", "channel", "@", "subscriber",
+                    "views", "revenue", "youtuber"],
+        "etsy":    ["etsy", "sell", "listing", "shop",
+                    "printable", "digital product"],
+        "trends":  ["trending", "hacker news", "reddit",
+                    "product hunt", "viral", "hot"],
+    }
+
+    for module, keywords in keyword_map.items():
+        if any(kw in query_lower for kw in keywords):
+            if module not in modules_found:
+                return False, (
+                    f"your query mentions {module}-related terms but "
+                    f"Ollama parsed it as {modules_found}"
+                )
+
+    # Signal 3: Any parsed command is missing an action
+    for cmd in commands:
+        if not cmd.get("action"):
+            return False, "parsed command has no action"
+
+    return True, "ok"
+
+
+def escalate_to_claude(query):
+    """
+    Re-runs intent parsing using Claude API.
+    Returns parsed commands list or None on failure.
+    """
+    if not config.ANTHROPIC_API_KEY:
+        print("  ⚠️  ANTHROPIC_API_KEY not set — cannot escalate to Claude.")
+        return None
+
+    print("  🤖 Escalating to Claude API...")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": query}],
+        )
+        raw = msg.content[0].text.strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        commands = json.loads(raw.strip())
+        if isinstance(commands, list):
+            print(f"  ✅ Claude parsed {len(commands)} command(s)")
+            return commands
+    except Exception as e:
+        print(f"  ❌ Claude escalation failed: {e}")
+    return None
+
+
+def prompt_escalation(reason, ollama_result, query):
+    """
+    Shows the user what Ollama parsed and asks if they want
+    to escalate to Claude. Returns final commands to use.
+    """
+    if not INTERACTIVE:
+        return ollama_result
+
+    print()
+    print("  ⚠️  Low confidence in Ollama's parsing")
+    print(f"  Reason: {reason}")
+    if ollama_result:
+        print(f"  Ollama parsed: {json.dumps(ollama_result)}")
+    else:
+        print("  Ollama returned: nothing")
+    print()
+
+    try:
+        answer = input(
+            "  Use Claude API for better understanding? [y/N] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("  (non-interactive — proceeding with Ollama result)")
+        return ollama_result
+
+    if answer in ("y", "yes"):
+        claude_result = escalate_to_claude(query)
+        if claude_result:
+            return claude_result
+        print("  Claude escalation failed — using Ollama result")
+    else:
+        print("  Proceeding with Ollama's parsing...")
+
+    return ollama_result
+
+
 # ── Agent Core ───────────────────────────────────────────────
 
 class ScraperAgent:
@@ -320,6 +443,21 @@ class ScraperAgent:
 
         print("\n[1/3] Understanding your request...")
         commands = self._parse_intent(user_input)
+
+        # Confidence check — only when an LLM actually ran
+        if self.use_llm and config.LLM_BACKEND not in ("none", ""):
+            is_confident, reason = confidence_check(commands, user_input)
+            if not is_confident:
+                commands = prompt_escalation(reason, commands, user_input)
+
+        # Final fallback if still empty after escalation
+        if not commands:
+            print("  ⚠️  No commands parsed — trying keyword fallback...")
+            try:
+                commands = json.loads(_keyword_fallback(user_input))
+            except json.JSONDecodeError:
+                pass
+
         if not commands:
             return "Couldn't figure out what to scrape. Try mentioning YouTube channels, Etsy products, crypto coins, or stock tickers."
 
@@ -479,13 +617,32 @@ def print_banner():
 
 
 def main():
-    if len(sys.argv) > 1:
-        query = " ".join(sys.argv[1:])
-        if query.startswith("--no-llm "):
-            agent = ScraperAgent(use_llm=False)
-            query = query[9:]
+    global INTERACTIVE
+
+    parser = argparse.ArgumentParser(
+        description="Scraper Agent — AI-powered web research"
+    )
+    parser.add_argument(
+        "query", nargs="*",
+        help="Query to run (omit for interactive mode; pass - to read from stdin)",
+    )
+    parser.add_argument(
+        "--no-llm", action="store_true",
+        help="Skip LLM, use keyword matching only",
+    )
+    parser.add_argument(
+        "--no-escalate", action="store_true",
+        help="Skip Claude escalation prompts (non-interactive mode)",
+    )
+    args = parser.parse_args()
+    INTERACTIVE = not args.no_escalate
+
+    if args.query:
+        if args.query == ["-"]:
+            query = sys.stdin.read().strip()
         else:
-            agent = ScraperAgent(use_llm=True)
+            query = " ".join(args.query)
+        agent = ScraperAgent(use_llm=not args.no_llm)
         result = agent.process(query)
         print(result)
         return
