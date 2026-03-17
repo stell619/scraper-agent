@@ -118,12 +118,12 @@ class YouTubeScraper:
         self.session = get_session()
 
     def scrape_channel(self, identifier):
-        if identifier.startswith("@"):
-            url = f"https://www.youtube.com/{identifier}"
-        elif identifier.startswith("http"):
+        if identifier.startswith("http"):
             url = identifier.rstrip("/")
         else:
-            url = f"https://www.youtube.com/channel/{identifier}"
+            # Strip leading @ if present, then always use @handle URL format
+            handle = identifier.lstrip("@")
+            url = f"https://www.youtube.com/@{handle}"
 
         cached = cache_get(f"yt:{url}")
         if cached:
@@ -131,6 +131,11 @@ class YouTubeScraper:
 
         print(f"  -> Fetching {url}")
         resp = fetch(url, self.session)
+        if not resp:
+            # Fall back to /channel/ URL for raw UC IDs
+            fallback = f"https://www.youtube.com/channel/{handle}"
+            print(f"  -> Retrying {fallback}")
+            resp = fetch(fallback, self.session)
         if not resp:
             return {"channel": identifier, "error": "Failed to fetch"}
 
@@ -552,7 +557,8 @@ class CryptoScraper:
 
         print(f"  -> Fetching: {', '.join(symbols)}")
         url = (f"{self.COINGECKO_API}/coins/markets"
-               f"?vs_currency=usd&ids={ids_str}&sparkline=false")
+               f"?vs_currency=usd&ids={ids_str}&sparkline=false"
+               f"&price_change_percentage=24h,7d")
         resp = fetch(url, self.session)
         if not resp:
             return {"error": "Failed to fetch coin data"}
@@ -574,6 +580,8 @@ class CryptoScraper:
                 "rank": c.get("market_cap_rank"),
                 "ath": c.get("ath"),
                 "from_ath_pct": round(((c.get("current_price", 0) - c.get("ath", 1)) / max(c.get("ath", 1), 0.01)) * 100, 1),
+                "ath_drop_pct": round((c.get("ath", 1) - c.get("current_price", 0)) / c.get("ath", 1) * 100, 1) if c.get("ath") else None,
+                "price_change_7d": c.get("price_change_percentage_7d_in_currency"),
                 "high_24h": c.get("high_24h"),
                 "low_24h": c.get("low_24h"),
                 "circulating_supply": c.get("circulating_supply"),
@@ -581,6 +589,41 @@ class CryptoScraper:
 
         result = {"coins": coins, "scraped_at": datetime.now().isoformat()}
         cache_set(f"crypto:specific:{ids_str}", result)
+        return result
+
+    def get_trending(self):
+        """Top 7 coins most searched on CoinGecko in the last 24hrs. Free, no API key."""
+        cached = cache_get("crypto:trending")
+        if cached:
+            return cached
+
+        print("  -> Fetching CoinGecko trending coins")
+        url = f"{self.COINGECKO_API}/search/trending"
+        resp = fetch(url, self.session)
+        if not resp:
+            return {"error": "Failed to fetch trending"}
+
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            return {"error": f"Invalid response: {e}"}
+
+        coins = []
+        for item in data.get("coins", []):
+            c = item.get("item", {})
+            coins.append({
+                "rank":   c.get("market_cap_rank"),
+                "name":   c.get("name"),
+                "symbol": c.get("symbol"),
+                "score":  c.get("score"),  # trending rank 0-6
+            })
+
+        result = {
+            "trending_coins": coins,
+            "note": "Most searched coins on CoinGecko in last 24hrs",
+            "scraped_at": datetime.now().isoformat(),
+        }
+        cache_set("crypto:trending", result)
         return result
 
 
@@ -757,13 +800,20 @@ class TrendScraper:
     def reddit_trending(self):
         print("    -> Reddit")
         posts = []
-        subreddits = ["popular", "technology", "cryptocurrency", "stocks"]
+        subreddits = [
+            "wallstreetbets",   # high-signal stock sentiment
+            "CryptoCurrency",   # crypto community
+            "investing",        # serious investors
+            "stocks",           # stock discussion
+            "technology",       # tech trends
+            "popular",          # general internet pulse
+        ]
         # Reddit needs a descriptive UA; use a separate session so we don't
         # clobber the randomised UA used by every other scraper.
         reddit_session = get_session()
         reddit_session.headers["User-Agent"] = "Python:scraper-agent:v1.0 (educational use)"
         for sub in subreddits:
-            url = f"https://www.reddit.com/r/{sub}/hot.json?limit=10"
+            url = f"https://www.reddit.com/r/{sub}/hot.json?limit=15"
             resp = fetch(url, reddit_session)
             if not resp:
                 continue
@@ -838,6 +888,126 @@ class TrendScraper:
 
 
 # ══════════════════════════════════════════════════════════════════
+#  MODULE 6: STOCKTWITS SENTIMENT
+# ══════════════════════════════════════════════════════════════════
+
+class StocktwitsScraper:
+    """
+    Scrapes Stocktwits for real-time stock and crypto sentiment.
+    Free public API, no key required.
+    Stocktwits is Twitter specifically for traders.
+    """
+
+    def __init__(self):
+        self.token = os.environ.get("STOCKTWITS_ACCESS_TOKEN", "")
+        self.session = get_session()
+        self.base = "https://api.stocktwits.com/api/2"
+
+    def get_trending(self):
+        """Get trending symbols on Stocktwits right now."""
+        cached = cache_get("stocktwits:trending")
+        if cached:
+            return cached
+
+        print("  -> Fetching Stocktwits trending symbols")
+        token_param = f"?access_token={self.token}" if self.token else ""
+        url = f"{self.base}/trending/symbols.json{token_param}"
+        resp = fetch(url, self.session)
+        if not resp:
+            if not self.token:
+                return {
+                    "skipped": True,
+                    "reason": "Stocktwits requires an access token — add STOCKTWITS_ACCESS_TOKEN to .env",
+                }
+            return {"error": "Stocktwits unavailable"}
+
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            return {"error": f"Invalid response: {e}"}
+
+        symbols = []
+        for s in data.get("symbols", [])[:15]:
+            symbols.append({
+                "symbol":          s.get("symbol"),
+                "title":           s.get("title"),
+                "watchlist_count": s.get("watchlist_count"),
+            })
+
+        result = {
+            "trending_symbols": symbols,
+            "note": "Most discussed symbols on Stocktwits right now",
+            "scraped_at": datetime.now().isoformat(),
+        }
+        cache_set("stocktwits:trending", result)
+        return result
+
+    def get_symbol_sentiment(self, symbol):
+        """Get recent messages and bullish/bearish sentiment for a ticker."""
+        symbol = symbol.upper().strip()
+        cached = cache_get(f"stocktwits:{symbol}")
+        if cached:
+            return cached
+
+        print(f"  -> Fetching Stocktwits sentiment: {symbol}")
+        token_param = f"?access_token={self.token}" if self.token else ""
+        url = f"{self.base}/streams/symbol/{symbol}.json{token_param}"
+        resp = fetch(url, self.session)
+        if not resp:
+            if not self.token:
+                return {
+                    "symbol": symbol,
+                    "skipped": True,
+                    "reason": "Stocktwits requires an access token — add STOCKTWITS_ACCESS_TOKEN to .env",
+                }
+            return {"symbol": symbol, "error": "Stocktwits unavailable"}
+
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            return {"error": f"Invalid response: {e}"}
+
+        messages = []
+        bullish = 0
+        bearish = 0
+
+        for msg in data.get("messages", [])[:20]:
+            sentiment = msg.get("entities", {}).get("sentiment", {})
+            if sentiment:
+                basic = sentiment.get("basic", "")
+                if basic == "Bullish":
+                    bullish += 1
+                elif basic == "Bearish":
+                    bearish += 1
+
+            messages.append({
+                "body":      msg.get("body", "")[:200],
+                "sentiment": sentiment.get("basic", "neutral") if sentiment else "neutral",
+                "likes":     msg.get("likes", {}).get("total", 0),
+                "created":   msg.get("created_at", ""),
+            })
+
+        total = bullish + bearish
+        bull_pct = round(bullish / total * 100) if total else 50
+
+        result = {
+            "symbol":          symbol,
+            "bullish":         bullish,
+            "bearish":         bearish,
+            "bull_pct":        bull_pct,
+            "sentiment_label": (
+                "BULLISH" if bull_pct > 60 else
+                "BEARISH" if bull_pct < 40 else
+                "NEUTRAL"
+            ),
+            "top_messages":    messages[:10],
+            "scraped_at":      datetime.now().isoformat(),
+        }
+        cache_set(f"stocktwits:{symbol}", result)
+        return result
+
+
+# ══════════════════════════════════════════════════════════════════
 #  MASTER DISPATCHER
 # ══════════════════════════════════════════════════════════════════
 
@@ -849,10 +1019,17 @@ def execute_scrape_command(command):
     try:
         if module == "youtube":
             yt = YouTubeScraper()
-            if action == "scrape_channel":
-                return yt.scrape_channel(params.get("channel", ""))
+            if action in ("scrape_channel", "channel"):
+                handle = (
+                    params.get("handle") or
+                    params.get("channel") or
+                    (params.get("channels") or [""])[0] or
+                    (params.get("handles") or [""])[0]
+                )
+                return yt.scrape_channel(handle)
             elif action == "scrape_channels":
-                return {"channels": yt.scrape_channels(params.get("channels", []))}
+                handles = params.get("handles") or params.get("channels") or []
+                return {"channels": [yt.scrape_channel(h) for h in handles]}
             else:
                 return {"error": f"Unknown YouTube action: {action}"}
 
@@ -869,11 +1046,15 @@ def execute_scrape_command(command):
             if action == "overview": return crypto.get_market_overview()
             elif action == "prices": return crypto.get_prices(coins=params.get("coins"), top_n=params.get("top_n", 20))
             elif action == "movers": return crypto.find_big_movers(params.get("threshold", 10))
+            elif action == "trending": return crypto.get_trending()
             else: return crypto.get_market_overview()
 
         elif module == "finance":
             fin = FinanceScraper()
-            if action == "quote": return fin.get_quote(params.get("symbol", ""))
+            if action == "quote":
+                # Accept both symbol (str) and symbols (list) from LLM
+                sym = params.get("symbol") or (params.get("symbols") or [""])[0]
+                return fin.get_quote(sym)
             elif action == "watchlist": return {"quotes": fin.get_watchlist(params.get("symbols", []))}
             elif action == "market_summary": return fin.get_market_summary()
             else: return fin.get_market_summary()
@@ -887,6 +1068,21 @@ def execute_scrape_command(command):
             elif source == "hackernews": return {"trends": tr.hackernews_top()}
             elif source == "producthunt": return {"trends": tr.producthunt_today()}
             else: return tr.get_all_trends()
+
+        elif module == "stocktwits":
+            st = StocktwitsScraper()
+            if not st.token:
+                return {
+                    "skipped": True,
+                    "reason": "Stocktwits access token not configured",
+                    "fix": "Register free app at stocktwits.com/developers and add STOCKTWITS_ACCESS_TOKEN to .env",
+                }
+            if action == "trending":
+                return st.get_trending()
+            elif action == "sentiment":
+                return st.get_symbol_sentiment(params.get("symbol", "BTC"))
+            else:
+                return st.get_trending()
 
         else:
             return {"error": f"Unknown module: {module}"}

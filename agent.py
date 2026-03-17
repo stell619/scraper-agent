@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
-SCRAPER AGENT — AI Brain
-Talk to this. It understands what you want, runs scrapers, reports back.
+Market Intelligence Agent
+
+An AI-powered finance and crypto research agent.
+Ask it about markets, crypto, stocks, sentiment,
+and what's moving — it gathers data from multiple
+sources and gives you an intelligent analysis.
+
+Data sources: CoinGecko, Yahoo Finance, Reddit
+(r/wallstreetbets, r/CryptoCurrency, r/investing),
+Stocktwits, Hacker News, YouTube
 
 USAGE:
-    python agent.py                               (interactive chat)
-    python agent.py "find trending crypto"        (one-shot)
-    python agent.py --no-llm "crypto movers"      (skip LLM)
-    python agent.py --no-escalate "some query"    (skip Claude escalation)
-    echo "bitcoin price" | python agent.py --no-escalate -  (stdin)
-
-BACKENDS:
-    OpenClaw (uses your existing setup — Haiku)
-    Ollama (free, local)
-    Anthropic / OpenAI (API keys)
-    No LLM (keyword matching)
+    python3 agent.py
+    python3 agent.py "what's moving in crypto today"
+    python3 agent.py "is ETH looking bullish on Reddit"
+    python3 agent.py "NVDA sentiment on Stocktwits"
+    python3 agent.py --no-escalate "BTC overview"
 """
 
 import argparse
@@ -62,7 +64,19 @@ except Exception:
     pass
 
 
-SYSTEM_PROMPT = """You are a research assistant that converts user requests into structured scraping commands.
+SYSTEM_PROMPT = """You are a market intelligence assistant that converts user requests into structured data collection commands.
+
+ROUTING RULES — follow exactly:
+- Crypto tokens (BTC, ETH, SOL, BNB, XRP, DOGE, any coin/token) → ALWAYS "crypto" module, NEVER "finance"
+- Stocks (NVDA, TSLA, AAPL, indices) → "finance" module
+- "trending/hot/popular/moving" with no domain → use BOTH "trends" AND "crypto" modules
+- "what's moving in crypto" → crypto.movers + crypto.overview
+- "market sentiment" or "what do people think about X" → trends.get_all + relevant crypto or finance module
+- Multiple crypto coins mentioned → run ONE crypto prices command with ALL coins listed, plus one crypto overview command
+- "what's hot/best performing/top movers" in crypto → run crypto movers, crypto trending, AND crypto overview commands
+- "is X a good buy / should I buy X" → run crypto prices for X, stocktwits sentiment for X, and trends with reddit source
+- Broad queries → run 2-3 relevant modules in parallel, more data is better, the AI will interpret it
+- NEVER route a crypto ticker to finance module
 
 You have access to these modules:
 1. **youtube** - Channel analytics, video performance, revenue estimates
@@ -73,17 +87,24 @@ You have access to these modules:
    Actions: search
    Params: query (str), pages (int 1-5), product_type ("all"/"digital"/"physical"), min_price (float), max_price (float), sort ("relevance"/"price_asc"/"price_desc"/"most_recent"/"top_reviews")
 
-3. **crypto** - Cryptocurrency prices, market overview, big movers
-   Actions: overview, prices, movers
+3. **crypto** - Cryptocurrency prices, market overview, big movers, trending coins
+   Actions: overview, prices, movers, trending
    Params: coins (list of symbols), top_n (int), threshold (float)
+   - crypto.trending → most searched coins on CoinGecko in last 24hrs
 
 4. **finance** - Stock quotes, market summary, watchlists
    Actions: quote, watchlist, market_summary
    Params: symbol (str), symbols (list of str)
 
-5. **trends** - Trending topics from Google, Reddit, HN, Product Hunt
+5. **trends** - Trending topics from Google, Reddit (r/wallstreetbets, r/CryptoCurrency, r/investing), HN, Product Hunt
    Actions: get_all
    Params: source ("all"/"google"/"reddit"/"hackernews"/"producthunt")
+
+6. **stocktwits** - Real-time trader sentiment (Twitter for stocks/crypto, free public API)
+   Actions: trending, sentiment
+   Params: symbol (str)
+   - stocktwits.trending → most discussed stocks/crypto on Stocktwits right now
+   - stocktwits.sentiment(symbol) → bullish/bearish % + recent trader messages for any ticker
 
 RESPOND WITH ONLY a JSON array of commands. Each command: module, action, params.
 
@@ -100,23 +121,107 @@ User: "Full market overview crypto and stocks"
 User: "BTC and SOL price, anything pumping?"
 [{"module":"crypto","action":"prices","params":{"coins":["BTC","SOL"]}},{"module":"crypto","action":"movers","params":{"threshold":10}}]
 
+User: "What's the sentiment on ETH?"
+[{"module":"stocktwits","action":"sentiment","params":{"symbol":"ETH"}},{"module":"crypto","action":"prices","params":{"coins":["ETH"]}},{"module":"trends","action":"get_all","params":{"source":"reddit"}}]
+
+User: "What crypto is trending right now?"
+[{"module":"crypto","action":"trending","params":{}},{"module":"crypto","action":"overview","params":{}}]
+
+User: "How much is @mkbhd making on YouTube?"
+[{"module":"youtube","action":"scrape_channel","params":{"handle":"mkbhd"}}]
+
+User: "What's trending in tech right now?"
+[{"module":"trends","action":"get_all","params":{"source":"hackernews"}}]
+
+User: "Analyse @linustechtips and @mkbhd"
+[{"module":"youtube","action":"scrape_channels","params":{"channels":["@linustechtips","@mkbhd"]}}]
+
+User: "What do traders think about NVDA?"
+[{"module":"stocktwits","action":"sentiment","params":{"symbol":"NVDA"}},{"module":"finance","action":"quote","params":{"symbol":"NVDA"}}]
+
+User: "Compare BTC ETH and SOL right now"
+[{"module":"crypto","action":"prices","params":{"coins":["BTC","ETH","SOL"]}},{"module":"crypto","action":"overview","params":{}}]
+
+User: "What's the hottest crypto right now"
+[{"module":"crypto","action":"movers","params":{"threshold":5}},{"module":"crypto","action":"trending","params":{}},{"module":"crypto","action":"overview","params":{}}]
+
 Return ONLY the JSON array. No explanation. No markdown. No backticks."""
 
 
-SUMMARY_PROMPT = """You are a sharp research analyst. The user asked: "{question}"
+SUMMARY_PROMPT = """You are a financial terminal. Present the data below as a concise intelligence brief.
 
-Here are the raw scraping results:
+Original question: {question}
 
+Data gathered:
 {data}
 
-Provide a clear, insightful summary. Include:
-- Key numbers and metrics (interpret them, don't just list)
-- Notable patterns or surprises
-- Actionable takeaways
-- For financial data, note significant moves
-- For product research, highlight best opportunities
+Respond in exactly this format:
 
-Keep it conversational but data-driven. Use specific numbers."""
+DATA
+----
+[Structured data block — price table, sentiment card, or key metrics depending on the query.
+For prices: show symbol | price | 24h% | 7d% | market cap as a compact table.
+For sentiment: show bullish%, bearish%, key trader quotes.
+For market overview: show total cap, BTC dominance, fear/greed, top movers.
+Keep it tight — numbers only, no prose here.]
+
+ANALYSIS
+--------
+[3-4 sentences, analyst voice. No bullet points. No filler phrases like "it's worth noting" or "overall".
+Answer the question directly, highlight what's surprising or actionable, connect dots across sources if relevant.]"""
+
+
+CLARIFICATION_TEMPLATES = {
+    "crypto_ambiguous": {
+        "question": "What would you like to know about crypto?",
+        "options": [
+            "Top gaining/losing coins right now",
+            "Full market overview (BTC dominance, fear/greed)",
+            "Specific coin prices (tell me which)",
+            "What's trending about crypto on Reddit/HN",
+        ],
+    },
+    "ticker_ambiguous": {
+        "question": "That ticker could be a crypto or a stock — which did you mean?",
+        "options": [
+            "Crypto (CoinGecko price)",
+            "Stock (Yahoo Finance quote)",
+        ],
+    },
+    "trending_ambiguous": {
+        "question": "What kind of trending are you after?",
+        "options": [
+            "What's hot on the internet today (Reddit, HN, Product Hunt)",
+            "Top trending crypto coins by volume/gains",
+            "Trending stocks / market movers",
+            "All of the above",
+        ],
+    },
+    "no_commands": {
+        "question": "I wasn't sure what to search for. What are you looking for?",
+        "options": [
+            "Crypto prices or market data",
+            "Stock prices or market data",
+            "YouTube channel analytics",
+            "Etsy product research",
+            "What's trending on the internet",
+        ],
+    },
+    "finance_crypto_conflict": {
+        "question": "Are you asking about the crypto token or the stock?",
+        "options": [
+            "Crypto token (e.g. ETH = Ethereum)",
+            "Stock ticker (e.g. ETH = Ethan Allen Interiors)",
+        ],
+    },
+    "vague_query": {
+        "question": "Your query is a bit broad — want me to narrow it down?",
+        "options": [
+            "Just run everything relevant",
+            "Let me rephrase my query",
+        ],
+    },
+}
 
 
 # ── LLM Backends ─────────────────────────────────────────────
@@ -311,6 +416,20 @@ def _keyword_fallback(prompt):
     return json.dumps(commands)
 
 
+def _parse_intent_ollama(query):
+    """Module-level intent parse via Ollama — useful for testing routing."""
+    raw = llm_call(query, system=SYSTEM_PROMPT, temperature=0.0)
+    try:
+        clean = re.sub(r'```json\s*|\s*```', '', raw).strip()
+        match = re.search(r'\[.*\]', clean, re.DOTALL)
+        if match:
+            commands = json.loads(match.group(0))
+            return commands if isinstance(commands, list) else [commands]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return json.loads(_keyword_fallback(query))
+
+
 # ── Confidence & Escalation ──────────────────────────────────
 
 def confidence_check(commands, original_query):
@@ -320,13 +439,25 @@ def confidence_check(commands, original_query):
     Checks multiple signals to decide if Ollama's
     intent parsing result is trustworthy.
     """
+    query_lower = original_query.lower()
+
+    # Broad query bypass — if query is clearly general/exploratory
+    # and Ollama returned something, trust it
+    BROAD_SIGNALS = [
+        "what's", "whats", "trending", "popular", "hot",
+        "today", "right now", "overview", "general",
+        "moving", "market", "sentiment", "happening",
+    ]
+    broad_score = sum(1 for w in BROAD_SIGNALS if w in query_lower)
+    if broad_score >= 2 and commands:
+        return True, "ok"
+
     # Signal 1: Empty or no commands
     if not commands:
         return False, "no commands were parsed from your query"
 
     # Signal 2: Keyword mismatch — obvious intent in query
     # doesn't match any parsed module
-    query_lower = original_query.lower()
     modules_found = [c.get("module", "") for c in commands]
 
     keyword_map = {
@@ -355,7 +486,107 @@ def confidence_check(commands, original_query):
         if not cmd.get("action"):
             return False, "parsed command has no action"
 
+    # Signal 4: "Trending" query with no domain specified — inherently ambiguous
+    trend_signals = ["trending", "what's popular", "what's hot", "viral", "buzz"]
+    domain_signals = (keyword_map["crypto"] + keyword_map["finance"] +
+                      keyword_map["youtube"] + keyword_map["etsy"])
+    if any(w in query_lower for w in trend_signals):
+        if not any(d in query_lower for d in domain_signals):
+            return False, "query asks what's trending but doesn't specify a domain (crypto, stocks, internet?)"
+
+    # Signal 5: Very short/vague query with no recognisable keywords
+    all_known = [kw for kws in keyword_map.values() for kw in kws]
+    if len(original_query.split()) <= 3 and not any(kw in query_lower for kw in all_known):
+        return False, "query is very short and has no recognisable keywords"
+
     return True, "ok"
+
+
+def select_clarification_template(commands, query):
+    """
+    Picks the most relevant clarification template based on
+    the confidence failure signals. Returns template key or None.
+    """
+    query_lower = query.lower()
+    modules_found = [c.get("module", "") for c in commands]
+
+    crypto_words = ["btc", "eth", "bitcoin", "ethereum",
+                    "crypto", "sol", "bnb", "coin", "token"]
+    stock_words  = ["stock", "nasdaq", "s&p", "nyse", "share", "dividend", "earnings"]
+    yt_words     = ["youtube", "channel", "subscriber", "views", "youtuber"]
+    etsy_words   = ["etsy", "listing", "shop", "printable", "digital product"]
+    trend_words  = ["trending", "popular", "hot", "viral", "moving", "top", "what's big"]
+
+    has_crypto = any(w in query_lower for w in crypto_words)
+    has_trend  = any(w in query_lower for w in trend_words)
+
+    # No commands at all
+    if not commands:
+        return "no_commands"
+
+    # No recognisable domain keywords — purely vague
+    all_domain = crypto_words + stock_words + yt_words + etsy_words + trend_words
+    if not any(w in query_lower for w in all_domain):
+        return "no_commands"
+
+    # Crypto keywords but Ollama routed to finance instead
+    if has_crypto and "finance" in modules_found and "crypto" not in modules_found:
+        return "finance_crypto_conflict"
+
+    # Crypto keywords but wrong module entirely
+    if has_crypto and "crypto" not in modules_found:
+        return "crypto_ambiguous"
+
+    # Trending without a domain — could mean internet trends, crypto, or stocks
+    if has_trend and len(modules_found) < 2:
+        return "trending_ambiguous"
+
+    return None
+
+
+def ask_clarification(template_key, original_query):
+    """
+    Presents a numbered clarification menu to the user.
+    Returns an enriched query string to re-parse, or None to skip.
+    """
+    if not INTERACTIVE:
+        return None
+
+    template = CLARIFICATION_TEMPLATES.get(template_key)
+    if not template:
+        return None
+
+    print()
+    print(f"  🤔 {template['question']}")
+    print()
+    for i, opt in enumerate(template["options"], 1):
+        print(f"     {i}. {opt}")
+    print()
+
+    try:
+        answer = input(
+            "  Enter number (or press Enter to proceed as-is): "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+    if not answer:
+        return None
+
+    try:
+        idx = int(answer) - 1
+        if 0 <= idx < len(template["options"]):
+            chosen = template["options"][idx]
+            enriched = f"{original_query} — specifically: {chosen}"
+            print(f"  ✓ Got it — searching for: {chosen}")
+            return enriched
+    except ValueError:
+        # Free-form text answer
+        enriched = f"{original_query} — specifically: {answer}"
+        print("  ✓ Got it.")
+        return enriched
+
+    return None
 
 
 def escalate_to_claude(query):
@@ -392,39 +623,71 @@ def escalate_to_claude(query):
     return None
 
 
-def prompt_escalation(reason, ollama_result, query):
+def prompt_escalation(reason, ollama_result, query, clarification_round=0):
     """
-    Shows the user what Ollama parsed and asks if they want
-    to escalate to Claude. Returns final commands to use.
+    First tries clarification (up to 2 rounds), then offers Claude API.
+
+    Round 0/1: show a clarification menu → re-parse enriched query.
+    Round 2+:  offer Claude API as final fallback.
     """
     if not INTERACTIVE:
         return ollama_result
 
+    # ── Round cap: offer Claude after 2 failed clarifications ────
+    if clarification_round >= 2:
+        print()
+        print("  ⚠️  Still uncertain after clarification.")
+        print(f"  Best attempt: {json.dumps(ollama_result)}")
+        print()
+        try:
+            answer = input(
+                "  Use Claude API for a better result? [y/N] "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return ollama_result
+        if answer in ("y", "yes"):
+            result = escalate_to_claude(query)
+            return result if result else ollama_result
+        return ollama_result
+
+    # ── Pick the best clarification template ─────────────────────
+    template_key = select_clarification_template(ollama_result, query)
+
+    if template_key:
+        enriched_query = ask_clarification(template_key, query)
+        if enriched_query:
+            print("  🔄 Re-parsing with your clarification...")
+            agent = ScraperAgent(use_llm=True)
+            new_commands = agent._parse_intent(enriched_query)
+            is_confident, new_reason = confidence_check(new_commands, enriched_query)
+            if is_confident:
+                return new_commands
+            # Still not confident — recurse for round 2
+            return prompt_escalation(
+                new_reason, new_commands, enriched_query,
+                clarification_round + 1,
+            )
+
+    # ── No template matched — fall through to Claude offer ───────
     print()
-    print("  ⚠️  Low confidence in Ollama's parsing")
-    print(f"  Reason: {reason}")
+    print(f"  ⚠️  Low confidence: {reason}")
     if ollama_result:
         print(f"  Ollama parsed: {json.dumps(ollama_result)}")
     else:
         print("  Ollama returned: nothing")
     print()
-
     try:
         answer = input(
             "  Use Claude API for better understanding? [y/N] "
         ).strip().lower()
     except (EOFError, KeyboardInterrupt):
-        print("  (non-interactive — proceeding with Ollama result)")
         return ollama_result
 
     if answer in ("y", "yes"):
-        claude_result = escalate_to_claude(query)
-        if claude_result:
-            return claude_result
-        print("  Claude escalation failed — using Ollama result")
-    else:
-        print("  Proceeding with Ollama's parsing...")
+        result = escalate_to_claude(query)
+        return result if result else ollama_result
 
+    print("  Proceeding with Ollama's parsing...")
     return ollama_result
 
 
@@ -478,6 +741,7 @@ class ScraperAgent:
                 save_output(result, f"{label}_{ts}")
 
         print(f"\n[3/3] Analyzing results...")
+        print("  → Interpreting results against your question...")
         if self.use_llm and config.LLM_BACKEND not in ("none", ""):
             summary = self._summarize(user_input, all_results)
         else:
