@@ -259,6 +259,7 @@ def fetch_market_data_loop():
         try:
             log_activity("Fetching crypto market data...", "active")
             run_scraper("crypto market overview")
+            run_scraper("top 20 crypto prices")
             with _cache_lock:
                 market_cache["crypto"] = parse_crypto_from_cache()
             log_activity("Crypto data updated", "ok")
@@ -367,6 +368,20 @@ def api_stocks():
 @app.route("/api/market_age")
 def api_market_age():
     return jsonify({"last_fetch": market_cache.get("last_fetch")})
+
+
+@app.route("/api/stats")
+def api_stats():
+    with _state_lock:
+        return jsonify({
+            "sessions_today":  bot_state.get("sessions_today", 0),
+            "tokens_today":    bot_state.get("tokens_today", 0),
+            "current_model":   bot_state.get("model", config.LLM_BACKEND),
+            "pipeline_runs_week": 0,
+            "images_total":    0,
+            "gym_sessions_week": 0,
+            "api_spend_total": 0.0,
+        })
 
 
 @app.route("/api/scrape", methods=["POST"])

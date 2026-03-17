@@ -848,15 +848,15 @@ class ScraperAgent:
 def print_banner():
     print("""
     ======================================================
-    |            SCRAPER AGENT  v1.1                      |
+    |            SCRAPER AGENT  v1.2                      |
     |                                                      |
     |  Talk to me naturally. I'll scrape the web for you.  |
     |                                                      |
     |  Examples:                                           |
+    |  * "Compare BTC, ETH and SOL"                        |
+    |  * "What's the hottest crypto right now?"            |
+    |  * "What do traders think about NVDA?"               |
     |  * "How much is @mkbhd making on YouTube?"           |
-    |  * "Best selling digital products on Etsy under $30" |
-    |  * "What's Bitcoin and Ethereum at?"                 |
-    |  * "Show me NVDA and TSLA stock prices"              |
     |  * "What's trending in tech right now?"              |
     |                                                      |
     |  Commands:  quit/exit, help, status, clear cache     |
