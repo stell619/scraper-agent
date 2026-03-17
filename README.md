@@ -26,7 +26,13 @@ The agent parses your intent, runs the appropriate scrapers in parallel, and ret
 ```
 User Input (natural language)
         ↓
-  Intent Parser (LLM or keyword fallback)
+  Intent Parser (Ollama — local, free)
+        ↓
+  Confidence Check
+  ├── High confidence → proceed
+  └── Low confidence → "Use Claude instead? [y/N]"
+                        ├── Yes → Claude API (Haiku)
+                        └── No  → proceed with Ollama's best attempt
         ↓
   Scrape Commands [{"module": "crypto", "action": "overview"}]
         ↓
@@ -36,6 +42,13 @@ User Input (natural language)
         ↓
   Result + saved JSON/CSV
 ```
+
+**How confidence is evaluated:**
+- Empty result — Ollama returned no commands
+- Keyword mismatch — query mentions crypto terms but Ollama routed to trends module
+- Missing action — parsed command has no action field
+
+**LLM routing note:** The intent parser uses an explicit system prompt to force JSON output from local models. The summariser uses a separate system message to prevent models like Mistral from generating commands instead of natural language — a common failure mode when no system prompt is provided.
 
 ---
 
@@ -55,15 +68,17 @@ User Input (natural language)
 
 Works with any of these — or none at all:
 
-| Backend | Cost | Setup |
-|---------|------|-------|
-| **Ollama** (default) | Free — runs locally | Install Ollama, pull a model |
-| **OpenClaw** | Free — uses your existing setup | OpenClaw in PATH |
-| **Anthropic Claude** | API pricing | Set `ANTHROPIC_API_KEY` |
-| **OpenAI GPT** | API pricing | Set `OPENAI_API_KEY` |
-| **None / Keyword** | Free | Set `LLM_BACKEND=none` |
+| Backend | Cost | Role |
+|---------|------|------|
+| **Ollama** (default) | Free — runs locally | Primary intent parser + summariser |
+| **Claude API** (Haiku) | ~$0.001/query | Escalation fallback when Ollama is uncertain |
+| **OpenClaw** | Free | Uses your existing OpenClaw setup |
+| **OpenAI GPT** | API pricing | Alternative to Claude for escalation |
+| **None / Keyword** | Free | Pattern matching — no LLM at all |
 
-The keyword fallback understands common patterns (crypto tickers, @handles, stock symbols) without any LLM.
+The default strategy is **Ollama-first** — every query runs through your local model for free. Claude API is only called when the confidence check detects a likely misparse and you confirm the escalation. This keeps costs near zero for typical usage.
+
+> ⚠️ The `ollama` Python package must be installed — it is included in `requirements.txt`. Without it the agent silently falls back to keyword matching for every query.
 
 ---
 
@@ -79,6 +94,9 @@ python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
 pip install -r requirements.txt
+
+# If using Ollama backend (default), also install:
+ollama pull mistral  # or llama3, qwen2.5-coder etc
 ```
 
 ### 2. Configure
@@ -92,13 +110,19 @@ nano .env  # Set your LLM backend and any API keys
 
 ```bash
 # Interactive chat mode
-python agent.py
+python3 agent.py
 
 # One-shot query
-python agent.py "What's trending in crypto today?"
+python3 agent.py "What's trending in crypto today?"
 
 # Skip LLM (keyword matching only)
-python agent.py --no-llm "BTC ETH SOL prices"
+python3 agent.py --no-llm "BTC ETH SOL prices"
+
+# Skip escalation prompts (non-interactive/piped use)
+python3 agent.py --no-escalate "some ambiguous query"
+
+# Pipe query via stdin
+echo "bitcoin price" | python3 agent.py --no-escalate -
 ```
 
 ---
@@ -169,7 +193,6 @@ CACHE_DIR=./.cache
 A live web dashboard showing bot status, market data, system stats, and activity log.
 
 ```bash
-pip install flask
 python dashboard-serve.py
 ```
 
@@ -226,6 +249,21 @@ Add a `_mybackend_call()` function in `agent.py` following the existing pattern,
 
 ---
 
+## 🔄 Recent Changes
+
+**v1.1 — Escalation & Reliability**
+- **Ollama→Claude escalation** — confidence check detects low-quality parses and offers Claude API as a fallback; user chooses y/N interactively
+- **--no-escalate flag** — skip prompts for non-interactive/piped use
+- **argparse CLI** — cleaner argument handling, supports stdin via `-`
+- **Thread safety** — `bot_state` and `market_cache` protected with `threading.Lock()`
+- **JSON error handling** — all `.json()` calls wrapped in try/except
+- **Ollama routing fixed** — was silently falling back to keyword matching when `ollama` package not installed
+- **Mistral summariser** — explicit system prompt prevents command hallucination
+- **Reddit session isolation** — no longer overwrites shared User-Agent
+- **Cache corruption** — corrupted files detected, logged and discarded
+
+---
+
 ## ⚠️ Legal & Ethics
 
 - This tool scrapes publicly available data
@@ -251,4 +289,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-*Built for research, market analysis, and content strategy.*
+*Built for research, market analysis, and content strategy. | Python 3.10+ | MIT License | v1.1*
