@@ -378,7 +378,7 @@ class ScraperAgent:
         if len(data_str) > 8000:
             data_str = data_str[:8000] + "\n... [truncated]"
         prompt = SUMMARY_PROMPT.format(question=question, data=data_str)
-        return llm_call(prompt, temperature=0.3)
+        return llm_call(prompt, system="You are a research analyst. Summarize the provided data in clear, natural language. Do NOT output JSON or commands.", temperature=0.3)
 
     def _format_raw(self, results):
         output = []

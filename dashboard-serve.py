@@ -11,7 +11,6 @@ Then open http://localhost:8080
 
 import json
 import os
-import re
 import subprocess
 import threading
 import time
@@ -43,6 +42,9 @@ bot_state = {
 activity_log  = deque(maxlen=50)
 market_cache  = {"crypto": None, "stocks": None, "last_fetch": None}
 system_cache  = {"data": None,   "last_fetch": None}
+
+_state_lock  = threading.Lock()
+_cache_lock  = threading.Lock()
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -257,15 +259,16 @@ def fetch_market_data_loop():
         try:
             log_activity("Fetching crypto market data...", "active")
             run_scraper("crypto market overview")
-            market_cache["crypto"] = parse_crypto_from_cache()
+            with _cache_lock:
+                market_cache["crypto"] = parse_crypto_from_cache()
             log_activity("Crypto data updated", "ok")
 
             log_activity("Fetching stock market data...", "active")
             run_scraper("stock market summary")
-            market_cache["stocks"] = parse_stocks_from_cache()
+            with _cache_lock:
+                market_cache["stocks"] = parse_stocks_from_cache()
+                market_cache["last_fetch"] = datetime.now().isoformat()
             log_activity("Stock data updated", "ok")
-
-            market_cache["last_fetch"] = datetime.now().isoformat()
         except Exception as e:
             log_activity(f"Market fetch error: {e}", "err")
 
@@ -296,14 +299,16 @@ def openclaw_webhook():
     msg   = data.get("message", "")
 
     if event in ("thinking", "running", "tool_call", "processing"):
-        bot_state.update({"state": "busy", "message": msg or "Processing...",
-                          "last_updated": datetime.now().isoformat()})
-        log_activity(bot_state["message"], "active")
+        with _state_lock:
+            bot_state.update({"state": "busy", "message": msg or "Processing...",
+                              "last_updated": datetime.now().isoformat()})
+        log_activity(msg or "Processing...", "active")
 
     elif event in ("done", "idle", "complete"):
-        bot_state.update({"state": "idle", "message": "Idle — waiting for instructions",
-                          "last_updated": datetime.now().isoformat(),
-                          "sessions_today": bot_state.get("sessions_today", 0) + 1})
+        with _state_lock:
+            bot_state.update({"state": "idle", "message": "Idle — waiting for instructions",
+                              "last_updated": datetime.now().isoformat(),
+                              "sessions_today": bot_state.get("sessions_today", 0) + 1})
         log_activity(msg or "Task complete", "ok")
 
     elif event == "error":
@@ -315,8 +320,9 @@ def openclaw_webhook():
 @app.route("/status/busy", methods=["POST"])
 def set_busy():
     msg = (request.json or {}).get("message", "Processing...")
-    bot_state.update({"state": "busy", "message": msg,
-                      "last_updated": datetime.now().isoformat()})
+    with _state_lock:
+        bot_state.update({"state": "busy", "message": msg,
+                          "last_updated": datetime.now().isoformat()})
     log_activity(msg, "active")
     return jsonify({"ok": True})
 
@@ -324,8 +330,9 @@ def set_busy():
 @app.route("/status/idle", methods=["POST"])
 def set_idle():
     msg = (request.json or {}).get("message", "Task complete")
-    bot_state.update({"state": "idle", "message": "Idle — waiting for instructions",
-                      "last_updated": datetime.now().isoformat()})
+    with _state_lock:
+        bot_state.update({"state": "idle", "message": "Idle — waiting for instructions",
+                          "last_updated": datetime.now().isoformat()})
     log_activity(msg, "ok")
     return jsonify({"ok": True})
 
@@ -368,15 +375,18 @@ def api_scrape():
     if not query:
         return jsonify({"error": "No query provided"}), 400
 
-    bot_state.update({"state": "busy", "message": f"Scraping: {query}"})
+    with _state_lock:
+        bot_state.update({"state": "busy", "message": f"Scraping: {query}"})
     log_activity(f"Manual scrape: {query}", "active")
 
     def _run():
         run_scraper(query)
-        bot_state.update({"state": "idle", "message": "Idle — waiting for instructions"})
+        with _state_lock:
+            bot_state.update({"state": "idle", "message": "Idle — waiting for instructions"})
         log_activity(f"Scrape complete: {query}", "ok")
-        market_cache["crypto"] = parse_crypto_from_cache()
-        market_cache["stocks"] = parse_stocks_from_cache()
+        with _cache_lock:
+            market_cache["crypto"] = parse_crypto_from_cache()
+            market_cache["stocks"] = parse_stocks_from_cache()
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"ok": True, "message": f"Scraping '{query}' in background"})

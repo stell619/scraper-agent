@@ -80,7 +80,11 @@ def cache_get(key):
     if path.exists():
         age_h = (time.time() - path.stat().st_mtime) / 3600
         if age_h < config.CACHE_TTL_HOURS:
-            return json.loads(path.read_text())
+            try:
+                return json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"  [WARN] Corrupted cache file {path.name}: {e} — discarding")
+                path.unlink(missing_ok=True)
     return None
 
 
@@ -210,8 +214,9 @@ class YouTubeScraper:
                               .get("videoRenderer", {}))
                     if vr:
                         view_txt = vr.get("viewCountText", {}).get("simpleText", "0")
+                        runs = vr.get("title", {}).get("runs", [])
                         videos.append({
-                            "title": vr.get("title", {}).get("runs", [{}])[0].get("text", ""),
+                            "title": runs[0].get("text", "") if runs else "",
                             "video_id": vr.get("videoId", ""),
                             "views": parse_number(view_txt.split()[0]),
                             "published": vr.get("publishedTimeText", {}).get("simpleText", ""),
@@ -272,6 +277,7 @@ class EtsyScraper:
     def search(self, query, pages=3, product_type="all",
                min_price=None, max_price=None, sort="relevance"):
 
+        pages = min(pages, config.MAX_PAGES_PER_SEARCH)
         cached = cache_get(f"etsy:{query}:{product_type}:{pages}:{sort}")
         if cached:
             return cached
@@ -494,7 +500,12 @@ class CryptoScraper:
             resp = fetch(url, self.session)
             if not resp:
                 continue
-            for c in resp.json():
+            try:
+                coin_data = resp.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"  [ERROR] Invalid JSON from CoinGecko: {e}")
+                continue
+            for c in coin_data:
                 coins.append({
                     "rank": c.get("market_cap_rank"),
                     "name": c.get("name"),
@@ -546,8 +557,13 @@ class CryptoScraper:
         if not resp:
             return {"error": "Failed to fetch coin data"}
 
+        try:
+            coin_data = resp.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"  [ERROR] Invalid JSON from CoinGecko: {e}")
+            return {"error": "Invalid response from CoinGecko"}
         coins = []
-        for c in resp.json():
+        for c in coin_data:
             coins.append({
                 "name": c.get("name"),
                 "symbol": c.get("symbol", "").upper(),
@@ -742,10 +758,13 @@ class TrendScraper:
         print("    -> Reddit")
         posts = []
         subreddits = ["popular", "technology", "cryptocurrency", "stocks"]
+        # Reddit needs a descriptive UA; use a separate session so we don't
+        # clobber the randomised UA used by every other scraper.
+        reddit_session = get_session()
+        reddit_session.headers["User-Agent"] = "Python:scraper-agent:v1.0 (educational use)"
         for sub in subreddits:
             url = f"https://www.reddit.com/r/{sub}/hot.json?limit=10"
-            self.session.headers["User-Agent"] = "ScraperBot/1.0"
-            resp = fetch(url, self.session)
+            resp = fetch(url, reddit_session)
             if not resp:
                 continue
             try:

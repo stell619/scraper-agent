@@ -14,7 +14,7 @@ if env_path.exists():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip())
+                os.environ.setdefault(key.strip(), value.strip().strip('"\''))
 
 
 def env(key, default=""):
@@ -48,7 +48,6 @@ MAX_PAGES_PER_SEARCH = 5
 OUTPUT_DIR = env("OUTPUT_DIR", "./output")
 CACHE_DIR = env("CACHE_DIR", "./.cache")
 OUTPUT_FORMAT = env("OUTPUT_FORMAT", "json")
-SAVE_RAW_HTML = False
 
 # ─── YouTube CPM Estimates (USD per 1,000 views) ───────────────
 CPM_RANGES = {
